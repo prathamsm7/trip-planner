@@ -86,7 +86,7 @@ export interface HotelProperty {
   rate_per_night?: { lowest?: string; extracted_lowest?: number };
   overall_rating?: number;
   reviews?: number;
-  images?: { original_image?: string }[];
+  images?: { original_image?: string; thumbnail?: string }[];
   amenities?: string[];
   type?: string;
 }
