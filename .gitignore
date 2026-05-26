@@ -216,3 +216,93 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---------------------------------------------------------------------------
+# Node.js / npm / pnpm / yarn
+# ---------------------------------------------------------------------------
+node_modules/
+**/node_modules/
+.npm
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.eslintcache
+.stylelintcache
+
+# ---------------------------------------------------------------------------
+# Next.js / build artifacts
+# ---------------------------------------------------------------------------
+.next/
+**/.next/
+out/
+.vercel
+.turbo
+*.tsbuildinfo
+next-env.d.ts.bak
+
+# ---------------------------------------------------------------------------
+# Test / coverage artifacts (JS side)
+# ---------------------------------------------------------------------------
+coverage/
+.nyc_output
+playwright/.cache/
+playwright-report/
+test-results/
+
+# ---------------------------------------------------------------------------
+# Environment files (apply across the whole repo)
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+!.env.*.example
+app/frontend/.env.local
+app/backend/.env
+
+# ---------------------------------------------------------------------------
+# OS files
+# ---------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------------------
+# Editor / IDE
+# ---------------------------------------------------------------------------
+.idea/
+*.swp
+*.swo
+*~
+
+# Keep shared VS Code settings checked in; ignore per-user files
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# ---------------------------------------------------------------------------
+# Cursor / agent tooling
+# ---------------------------------------------------------------------------
+.cursor/
+
+# ---------------------------------------------------------------------------
+# Logs / temp
+# ---------------------------------------------------------------------------
+*.log
+logs/
+tmp/
+.tmp/
+*.tmp

@@ -1,0 +1,17 @@
+# App-specific overrides (most patterns live in the root .gitignore)
+
+# Local environment files
+.env
+frontend/.env.local
+backend/.env
+
+# Backend virtualenv (in case .venv lives inside app/backend)
+backend/.venv/
+
+# Frontend build output
+frontend/.next/
+frontend/out/
+
+# Node + Python local caches (defense in depth — root also covers these)
+node_modules/
+__pycache__/

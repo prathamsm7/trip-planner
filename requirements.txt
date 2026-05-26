@@ -1,0 +1,11 @@
+# Dependencies for traveltest.ipynb (install: uv pip install -r requirements.txt)
+langchain-core
+langchain-openai
+langchain-community
+langgraph
+langsmith
+pydantic
+google-search-results
+duckduckgo-search
+ipykernel
+jupyter
