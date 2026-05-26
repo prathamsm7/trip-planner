@@ -2,10 +2,12 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-_ROOT = Path(__file__).resolve().parents[4]
+# /.../backend/src/safar_api/config.py -> /.../backend
+_BACKEND_ROOT = Path(__file__).resolve().parents[2]
 _ENV_FILES = (
-    _ROOT / "app" / ".env",
-    _ROOT / ".env",
+    _BACKEND_ROOT / ".env",  # backend/.env (optional)
+    _BACKEND_ROOT.parent / ".env",  # app/.env (optional)
+    _BACKEND_ROOT.parent.parent / ".env",  # repo/.env (optional)
 )
 
 
