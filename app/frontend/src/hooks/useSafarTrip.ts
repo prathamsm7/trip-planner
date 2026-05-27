@@ -31,6 +31,41 @@ function mergeSnapshot(prev: TripSnapshot | null, patch: Record<string, unknown>
   return { ...(prev ?? {}), ...patch } as TripSnapshot;
 }
 
+function buildContextualFollowUp(query: string, snapshot: TripSnapshot): string {
+  const q = query.toLowerCase();
+  const hasItinerary = !!snapshot.itinerary;
+  const flights = snapshot.flights_data as Record<string, unknown> | undefined;
+  const hasFlights =
+    ((flights?.best_flights as unknown[]) ?? []).length > 0 ||
+    ((flights?.other_flights as unknown[]) ?? []).length > 0;
+  const hotels = snapshot.hotel_search_results ?? null;
+  const hasHotels = !!hotels && hotels.length > 0;
+
+  if (q.includes("flight")) {
+    return hasFlights
+      ? "Would you like me to shortlist the best 2-3 flight options by price and duration?"
+      : "Want me to try nearby airports or flexible dates to find better flight options?";
+  }
+  if (q.includes("hotel") || q.includes("stay") || q.includes("homestay")) {
+    return hasHotels
+      ? "Would you like recommendations for the best hotel based on location, rating, and budget?"
+      : "Should I widen hotel filters (budget or area) and search again?";
+  }
+  if (
+    q.includes("change") ||
+    q.includes("update") ||
+    q.includes("modify") ||
+    q.includes("add") ||
+    q.includes("day ")
+  ) {
+    return "Would you like me to make another tweak or show a quick summary of exactly what changed?";
+  }
+  if (hasItinerary) {
+    return "Would you like me to refine this plan further for budget, pacing, or food preferences?";
+  }
+  return "Would you like me to plan a trip now with destination, dates, and travel style?";
+}
+
 export function useSafarTrip() {
   const [threadId, setThreadId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -57,6 +92,8 @@ export function useSafarTrip() {
   } | null>(null);
   const initRef = useRef(false);
   const preStreamSnapshot = useRef<TripSnapshot | null>(null);
+  const lastUserQueryRef = useRef("");
+  const responseSentRef = useRef(false);
 
   useEffect(() => {
     if (initRef.current) return;
@@ -116,12 +153,14 @@ export function useSafarTrip() {
       setShowPackageCard(true);
     }
     if (event.type === "message" && event.content) {
+      responseSentRef.current = true;
       setMessages((prev) => [
         ...prev,
         { id: uid(), role: "assistant", content: event.content! },
       ]);
     }
     if (event.type === "interrupt") {
+      responseSentRef.current = true;
       setInterrupt({
         question: event.question,
         index: event.index,
@@ -149,6 +188,7 @@ export function useSafarTrip() {
       const prev = preStreamSnapshot.current;
       setSnapshot(event.snapshot);
       setInterrupt(null);
+      let primaryResponseAdded = responseSentRef.current;
 
       const itineraryIsNew = event.snapshot.itinerary && !prev?.itinerary;
       const fd = event.snapshot.flights_data as Record<string, unknown> | undefined;
@@ -158,6 +198,7 @@ export function useSafarTrip() {
         event.snapshot.hotel_search_results != null && prev?.hotel_search_results == null;
 
       if (itineraryIsNew) {
+        primaryResponseAdded = true;
         setShowPackageCard(true);
         const summary =
           (event.snapshot.itinerary as { summary?: string })?.summary ??
@@ -172,6 +213,7 @@ export function useSafarTrip() {
           ((fd?.other_flights as unknown[]) ?? []).length > 0;
         setShowPackageCard(true);
         if (hasFlights) {
+          primaryResponseAdded = true;
           setMessages((prev) => [
             ...prev,
             {
@@ -184,6 +226,7 @@ export function useSafarTrip() {
       } else if (hotelsAreNew) {
         setShowPackageCard(true);
         if (event.snapshot.hotel_search_results!.length > 0) {
+          primaryResponseAdded = true;
           setMessages((prev) => [
             ...prev,
             {
@@ -194,6 +237,17 @@ export function useSafarTrip() {
           ]);
         }
       }
+
+      if (!primaryResponseAdded) {
+        const followUp = buildContextualFollowUp(lastUserQueryRef.current, event.snapshot);
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === "assistant" && last.content === followUp) return prev;
+          return [...prev, { id: uid(), role: "assistant", content: followUp }];
+        });
+      }
+
+      responseSentRef.current = false;
     }
     if (event.type === "error") {
       setMessages((prev) => [
@@ -211,6 +265,8 @@ export function useSafarTrip() {
     async (content: string) => {
       if (!threadId || !content.trim() || isStreaming) return;
       preStreamSnapshot.current = snapshot;
+      lastUserQueryRef.current = content.trim();
+      responseSentRef.current = false;
       setMessages((prev) => [...prev, { id: uid(), role: "user", content: content.trim() }]);
       setIsStreaming(true);
       setSteps([]);

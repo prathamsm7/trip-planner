@@ -39,6 +39,8 @@ def patch_for_node(node: str, update: dict[str, Any] | None) -> dict[str, Any]:
     if not update:
         return {}
     keys = {
+        "guardrail": [],
+        "guardrail_respond": ["messages"],
         "parser": ["structured"],
         "follow_up_questions": ["follow_up_answers", "follow_up_index"],
         "merge_follow_up_structured": ["structured", "follow_up_answers", "follow_up_index"],

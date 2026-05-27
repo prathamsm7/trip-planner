@@ -30,7 +30,8 @@ INTENT DEFINITIONS — pick the BEST match:
 - get_info: User asks a QUESTION about the current trip, its details, budget, weather,
   itinerary, or anything that can be answered from existing session data.
   If a trip is already planned and the user asks about budget, cost, dates, places, etc., use this.
-- general_chat: Greeting, off-topic, or casual conversation not about a specific trip action.
+- For greetings, off-topic prompts, or casual conversation, use get_info so the app stays
+  focused on session and travel context.
 
 IMPORTANT: If a trip is already planned and the user asks about it (budget, details, summary, etc.),
 classify as "get_info", NOT "plan_trip".
@@ -51,4 +52,4 @@ classify as "get_info", NOT "plan_trip".
 
 
 def intent_route(state: TravelState) -> str:
-    return state.user_current_intent or "general_chat"
+    return state.user_current_intent or "get_info"

@@ -73,7 +73,7 @@ export function ItineraryTab({
             <section>
               <h3 className="font-semibold text-lg mb-3">Weather outlook</h3>
               <p className="text-sm text-gray-500 mb-3">{weather.summary}</p>
-              <div className="space-y-2">
+              {/* <div className="space-y-2">
                 {weather.days.map((d, i) => (
                   <div
                     key={i}
@@ -91,7 +91,7 @@ export function ItineraryTab({
                     </div>
                   </div>
                 ))}
-              </div>
+              </div> */}
             </section>
           )}
         </div>

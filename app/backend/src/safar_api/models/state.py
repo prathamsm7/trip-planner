@@ -20,6 +20,7 @@ class TravelState(BaseModel):
     status: Literal["approved", "revise", "infeasible"] = "revise"
     iteration: int = 0
     maxIteration: int = 2
+    guardrail_action: str = "allow"
     user_current_intent: str = ""
     messages: Annotated[Sequence[BaseMessage], add_messages] = Field(default_factory=list)
     hotel_search_results: Optional[List[dict]] = None

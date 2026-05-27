@@ -10,6 +10,9 @@ from safar_api.nodes import (
     follow_up_questions,
     follow_up_router,
     followup_route,
+    guardrail_node,
+    guardrail_respond,
+    guardrail_route,
     hotel_search_node,
     intent_route,
     merge_follow_up_structured,
@@ -25,6 +28,8 @@ _memory = InMemorySaver()
 _graph = None
 
 NODE_LABELS: dict[str, str] = {
+    "guardrail": "Checking message",
+    "guardrail_respond": "Responding",
     "extract_user_intent": "Understanding your request",
     "parser": "Extracting trip details",
     "follow_up_questions": "Need a few more details",
@@ -44,6 +49,8 @@ NODE_LABELS: dict[str, str] = {
 def compile_graph():
     workflow = StateGraph(TravelState)
 
+    workflow.add_node("guardrail", guardrail_node)
+    workflow.add_node("guardrail_respond", guardrail_respond)
     workflow.add_node("extract_user_intent", extract_user_intent)
     workflow.add_node("parser", parser_node)
     workflow.add_node("follow_up_questions", follow_up_questions)
@@ -58,7 +65,16 @@ def compile_graph():
     workflow.add_node("modify_itinerary", modify_itinerary)
     workflow.add_node("session_faq", session_faq_node)
 
-    workflow.add_edge(START, "extract_user_intent")
+    workflow.add_edge(START, "guardrail")
+    workflow.add_conditional_edges(
+        "guardrail",
+        guardrail_route,
+        {
+            "extract_user_intent": "extract_user_intent",
+            "guardrail_respond": "guardrail_respond",
+        },
+    )
+    workflow.add_edge("guardrail_respond", END)
     workflow.add_conditional_edges(
         "extract_user_intent",
         intent_route,
@@ -68,7 +84,6 @@ def compile_graph():
             "flight_search": "flight_search",
             "book_hotel": "hotel_search",
             "get_info": "session_faq",
-            "general_chat": "session_faq",
         },
     )
     workflow.add_edge("modify_itinerary", "web_queries")

@@ -74,9 +74,8 @@ class IntentOutput(BaseModel):
         "modify_itinerary",
         "book_hotel",
         "get_info",
-        "general_chat",
         "flight_search",
-    ] = "general_chat"
+    ] = "get_info"
 
 
 class LocationDetails(BaseModel):

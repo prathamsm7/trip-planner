@@ -1,3 +1,4 @@
+from safar_api.nodes.guardrail import guardrail_node, guardrail_respond, guardrail_route
 from safar_api.nodes.intent import extract_user_intent, intent_route
 from safar_api.nodes.parser import parser_node, followup_route
 from safar_api.nodes.follow_up import follow_up_questions, follow_up_router
@@ -14,6 +15,9 @@ from safar_api.nodes.modify import modify_itinerary
 from safar_api.nodes.faq import session_faq_node
 
 __all__ = [
+    "guardrail_node",
+    "guardrail_respond",
+    "guardrail_route",
     "extract_user_intent",
     "intent_route",
     "parser_node",

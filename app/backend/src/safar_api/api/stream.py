@@ -126,7 +126,14 @@ async def stream_graph(
                 if hints.get("show_package_card"):
                     yield _sse({"type": "package_ready", "thread_id": thread_id})
 
-                _msg_nodes = ("session_faq", "flight_search", "hotel_search")
+                _msg_nodes = (
+                    "session_faq",
+                    "flight_search",
+                    "hotel_search",
+                    "guardrail",
+                    "modify_itinerary",
+                    "patch_itinerary_day",
+                )
                 if update and node in _msg_nodes and update.get("messages"):
                     last = update["messages"][-1]
                     if isinstance(last, AIMessage):
