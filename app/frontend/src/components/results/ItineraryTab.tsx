@@ -53,7 +53,7 @@ export function ItineraryTab({
           {itinerary && (
             <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[
-                { label: `${days} Days`, icon: "📅" },
+                { label: `${days} Days`, icon: "🗓️" },
                 { label: "Itinerary", icon: "🗺️" },
                 { label: (structured?.travel_style as string) ?? "Trip", icon: "👥" },
                 { label: (structured?.budget as string) ?? "Budget", icon: "💰" },

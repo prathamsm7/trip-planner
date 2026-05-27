@@ -89,17 +89,23 @@ async def stream_graph(
         async for mode, chunk in graph.astream(
             graph_input,
             config,
-            stream_mode=["updates"],
+            stream_mode=["debug"],
         ):
-            if mode != "updates" or not isinstance(chunk, dict):
+            if mode != "debug" or not isinstance(chunk, dict):
                 continue
-            for node, update in chunk.items():
-                if isinstance(update, tuple):
-                    update = None
-                if update is not None and not isinstance(update, dict):
-                    continue
 
-                label = NODE_LABELS.get(node, node)
+            event_type = chunk.get("type")
+            payload = chunk.get("payload")
+            if not isinstance(payload, dict):
+                continue
+
+            node = payload.get("name")
+            if not isinstance(node, str) or node not in NODE_LABELS:
+                continue
+
+            label = NODE_LABELS.get(node, node)
+
+            if event_type == "task":
                 yield _sse(
                     {
                         "type": "step_start",
@@ -108,43 +114,54 @@ async def stream_graph(
                         "thread_id": thread_id,
                     }
                 )
-                patch = patch_for_node(node, update)
-                if node == "extract_user_intent" and "user_current_intent" in patch:
-                    intent_seen = patch["user_current_intent"]
-                hints = _ui_hints(node, intent_seen)
-                yield _sse(
-                    {
-                        "type": "step_complete",
-                        "node": node,
-                        "label": label,
-                        "payload": patch,
-                        "ui_hints": hints,
-                        "thread_id": thread_id,
-                    }
-                )
+                continue
 
-                if hints.get("show_package_card"):
-                    yield _sse({"type": "package_ready", "thread_id": thread_id})
+            if event_type != "task_result":
+                continue
 
-                _msg_nodes = (
-                    "session_faq",
-                    "flight_search",
-                    "hotel_search",
-                    "guardrail",
-                    "modify_itinerary",
-                    "patch_itinerary_day",
-                )
-                if update and node in _msg_nodes and update.get("messages"):
-                    last = update["messages"][-1]
-                    if isinstance(last, AIMessage):
-                        yield _sse(
-                            {
-                                "type": "message",
-                                "role": "assistant",
-                                "content": last.content,
-                                "thread_id": thread_id,
-                            }
-                        )
+            update = payload.get("result")
+            if isinstance(update, tuple):
+                update = None
+            if update is not None and not isinstance(update, dict):
+                continue
+
+            patch = patch_for_node(node, update)
+            if node == "extract_user_intent" and "user_current_intent" in patch:
+                intent_seen = patch["user_current_intent"]
+            hints = _ui_hints(node, intent_seen)
+            yield _sse(
+                {
+                    "type": "step_complete",
+                    "node": node,
+                    "label": label,
+                    "payload": patch,
+                    "ui_hints": hints,
+                    "thread_id": thread_id,
+                }
+            )
+
+            if hints.get("show_package_card"):
+                yield _sse({"type": "package_ready", "thread_id": thread_id})
+
+            _msg_nodes = (
+                "session_faq",
+                "flight_search",
+                "hotel_search",
+                "guardrail",
+                "modify_itinerary",
+                "patch_itinerary_day",
+            )
+            if update and node in _msg_nodes and update.get("messages"):
+                last = update["messages"][-1]
+                if isinstance(last, AIMessage):
+                    yield _sse(
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": last.content,
+                            "thread_id": thread_id,
+                        }
+                    )
 
         snapshot = graph.get_state(config)
         if snapshot.interrupts and not interrupt_sent:
