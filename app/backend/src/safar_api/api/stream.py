@@ -19,7 +19,7 @@ def _ui_hints(node: str, intent: str | None) -> dict[str, Any]:
     if node == "planner":
         hints["open_tab"] = "itinerary"
         hints["show_package_card"] = True
-    elif node == "modify_itinerary":
+    elif node in ("modify_itinerary", "patch_itinerary"):
         hints["open_tab"] = "itinerary"
     elif node == "flight_search":
         hints["open_tab"] = "flights"
@@ -149,7 +149,7 @@ async def stream_graph(
                 "hotel_search",
                 "guardrail",
                 "modify_itinerary",
-                "patch_itinerary_day",
+                "patch_itinerary",
             )
             if update and node in _msg_nodes and update.get("messages"):
                 last = update["messages"][-1]

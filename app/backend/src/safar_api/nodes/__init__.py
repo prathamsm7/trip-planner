@@ -11,7 +11,8 @@ from safar_api.nodes.search import (
 from safar_api.nodes.weather import extract_weather_node
 from safar_api.nodes.planner import planner_node
 from safar_api.nodes.booking import flight_search_node, hotel_search_node
-from safar_api.nodes.modify import modify_itinerary
+from safar_api.nodes.modify import modify_itinerary, modify_route
+from safar_api.nodes.patch import patch_itinerary
 from safar_api.nodes.faq import session_faq_node
 
 __all__ = [
@@ -33,5 +34,7 @@ __all__ = [
     "flight_search_node",
     "hotel_search_node",
     "modify_itinerary",
+    "modify_route",
+    "patch_itinerary",
     "session_faq_node",
 ]

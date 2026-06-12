@@ -17,7 +17,9 @@ from safar_api.nodes import (
     intent_route,
     merge_follow_up_structured,
     modify_itinerary,
+    modify_route,
     parser_node,
+    patch_itinerary,
     planner_node,
     session_faq_node,
     transport_search_node,
@@ -42,6 +44,7 @@ NODE_LABELS: dict[str, str] = {
     "flight_search": "Searching flights",
     "hotel_search": "Searching hotels",
     "modify_itinerary": "Updating your plan",
+    "patch_itinerary": "Refining your itinerary",
     "session_faq": "Answering your question",
 }
 
@@ -63,6 +66,7 @@ def compile_graph():
     workflow.add_node("hotel_search", hotel_search_node)
     workflow.add_node("flight_search", flight_search_node)
     workflow.add_node("modify_itinerary", modify_itinerary)
+    workflow.add_node("patch_itinerary", patch_itinerary)
     workflow.add_node("session_faq", session_faq_node)
 
     workflow.add_edge(START, "guardrail")
@@ -86,7 +90,16 @@ def compile_graph():
             "get_info": "session_faq",
         },
     )
-    workflow.add_edge("modify_itinerary", "web_queries")
+    workflow.add_conditional_edges(
+        "modify_itinerary",
+        modify_route,
+        {
+            "patch": "patch_itinerary",
+            "replan": "planner",
+            "re_search": "web_queries",
+        },
+    )
+    workflow.add_edge("patch_itinerary", END)
     workflow.add_edge("hotel_search", END)
     workflow.add_edge("flight_search", END)
     workflow.add_edge("session_faq", END)

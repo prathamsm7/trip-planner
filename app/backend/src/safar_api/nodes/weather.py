@@ -9,6 +9,10 @@ _about_llm = secondary_llm()
 
 
 def extract_weather_node(state: TravelState) -> dict:
+    plan = state.search_plan or {}
+    if plan and not plan.get("run_weather"):
+        return {"weather": None}
+
     activities = state.activities_results or {}
     text = ""
     if isinstance(activities, dict):

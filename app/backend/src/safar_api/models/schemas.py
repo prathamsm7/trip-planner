@@ -30,6 +30,11 @@ class StructuredTravelExtract(BaseModel):
     accomodation_type: Literal["hotel", "guesthouse", "airbnb", "homestay"] = "hotel"
     month: str = ""
     season: str = ""
+    run_transport: bool = True
+    run_activities: bool = True
+    run_weather: bool = True
+    transport_query: str = ""
+    activities_query: str = ""
 
 
 class StructuredTravel(BaseModel):
@@ -66,6 +71,7 @@ class UpdateStructuredTravel(BaseModel):
     accomodation_type: Literal["hotel", "guesthouse", "airbnb", "homestay"] = "hotel"
     month: str = ""
     season: str = ""
+    modify_scope: Literal["patch", "replan", "re_search"] = "patch"
 
 
 class IntentOutput(BaseModel):

@@ -22,6 +22,8 @@ class TravelState(BaseModel):
     maxIteration: int = 2
     guardrail_action: str = "allow"
     user_current_intent: str = ""
+    search_plan: Optional[Dict[str, Any]] = None
+    modify_scope: str = ""
     messages: Annotated[Sequence[BaseMessage], add_messages] = Field(default_factory=list)
     hotel_search_results: Optional[List[dict]] = None
     flights_data: dict = Field(default_factory=dict)
