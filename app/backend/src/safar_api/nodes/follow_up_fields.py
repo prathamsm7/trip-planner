@@ -34,7 +34,6 @@ _TRANSPORT_MODES = ("flight", "train", "bus", "car")
 
 _date_llm = secondary_llm().with_structured_output(
     DateRange,
-    method="function_calling",
 )
 
 

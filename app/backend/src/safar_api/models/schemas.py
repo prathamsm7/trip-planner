@@ -30,11 +30,6 @@ class StructuredTravelExtract(BaseModel):
     accomodation_type: Literal["hotel", "guesthouse", "airbnb", "homestay"] = "hotel"
     month: str = ""
     season: str = ""
-    run_transport: bool = True
-    run_activities: bool = True
-    run_weather: bool = True
-    transport_query: str = ""
-    activities_query: str = ""
 
 
 class StructuredTravel(BaseModel):
@@ -129,6 +124,20 @@ class WeatherOutlook(BaseModel):
     destination: str
     summary: str
     days: List[WeatherDay]
+
+
+class WeatherExtract(BaseModel):
+    """Single LLM output: structured weather plus destination overview prose."""
+
+    destination: str
+    summary: str
+    days: List[WeatherDay]
+    destination_about: str = Field(
+        description=(
+            "2-3 paragraph 'About {destination}' overview for a trip planner UI. "
+            "Use only facts from the search text. Be concise and helpful."
+        )
+    )
 
 
 class FollowUpResume(BaseModel):

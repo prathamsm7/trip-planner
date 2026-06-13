@@ -3,6 +3,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from safar_api.models.schemas import UpdateStructuredTravel
 from safar_api.models.state import TravelState
 from safar_api.services.llm import secondary_llm
+from safar_api.services.text import build_search_plan
 
 _MODIFY_SCOPE_PROMPT = """
 Also set modify_scope — how aggressively the system should update the trip:
@@ -59,7 +60,7 @@ def modify_itinerary(state: TravelState) -> dict:
                 "activities_results": None,
                 "weather": None,
                 "destination_about": "",
-                "search_plan": None,
+                "search_plan": build_search_plan(merged),
             }
         )
 

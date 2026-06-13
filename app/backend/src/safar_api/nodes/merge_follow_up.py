@@ -5,13 +5,11 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from safar_api.models.schemas import StructuredTravelExtract
 from safar_api.models.state import TravelState
 from safar_api.nodes.follow_up_fields import apply_follow_up_to_structured, with_planning_defaults
-from safar_api.nodes.parser import _SEARCH_PLAN_PROMPT
-from safar_api.nodes.search_plan import compute_search_plan, search_plan_from_extract, strip_search_plan_fields
 from safar_api.services.llm import secondary_llm
+from safar_api.services.text import build_search_plan
 
 _merge_llm = secondary_llm().with_structured_output(
     StructuredTravelExtract,
-    method="function_calling",
 )
 
 
@@ -23,19 +21,17 @@ def merge_follow_up_structured(state: TravelState) -> dict:
         return {
             "structured": merged,
             "follow_up_index": 0,
-            "search_plan": compute_search_plan(merged),
+            "search_plan": build_search_plan(merged),
         }
 
     qa_block = "\n".join(
         f"{field}: {text}" for field, text in answers.items()
     )
-    prompt = f"""
+    prompt = """
         Merge the follow-up answers into a complete structured travel profile.
         Fill only fields that are still null or empty. Use enum values for budget, travel_style,
         and mode_of_transport. Use ISO dates for date_range when possible.
         Do not invent values the user did not provide.
-
-        {_SEARCH_PLAN_PROMPT}
         """
 
     result = _merge_llm.invoke(
@@ -50,8 +46,7 @@ def merge_follow_up_structured(state: TravelState) -> dict:
         ]
     )
 
-    raw = result.model_dump(exclude_none=True)
-    merged = {**structured, **strip_search_plan_fields(raw)}
+    merged = {**structured, **result.model_dump(exclude_none=True)}
     merged = apply_follow_up_to_structured(merged)
     merged = with_planning_defaults(merged)
     merged["follow_up_answers"] = answers
@@ -60,5 +55,5 @@ def merge_follow_up_structured(state: TravelState) -> dict:
         "structured": merged,
         "follow_up_answers": answers,
         "follow_up_index": 0,
-        "search_plan": search_plan_from_extract(raw, merged),
+        "search_plan": build_search_plan(merged),
     }

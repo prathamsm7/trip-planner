@@ -1,18 +1,13 @@
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from safar_api.models.schemas import WeatherOutlook
+from safar_api.models.schemas import WeatherExtract
 from safar_api.models.state import TravelState
-from safar_api.services.llm import secondary_llm, weather_llm
+from safar_api.services.llm import weather_llm
 
-_weather_llm = weather_llm().with_structured_output(WeatherOutlook)
-_about_llm = secondary_llm()
+_weather_llm = weather_llm().with_structured_output(WeatherExtract)
 
 
 def extract_weather_node(state: TravelState) -> dict:
-    plan = state.search_plan or {}
-    if plan and not plan.get("run_weather"):
-        return {"weather": None}
-
     activities = state.activities_results or {}
     text = ""
     if isinstance(activities, dict):
@@ -24,13 +19,15 @@ def extract_weather_node(state: TravelState) -> dict:
     if not text.strip():
         return {"weather": None}
 
-    outlook = _weather_llm.invoke(
+    result = _weather_llm.invoke(
         [
             SystemMessage(
                 content=(
-                    "Extract a weather outlook for the trip from the travel search text. "
-                    "Infer daily conditions for each day of the trip if exact dates are unclear. "
-                    "Return structured JSON only."
+                    "From the travel search text, extract:\n"
+                    "1. A weather outlook for the trip (infer daily conditions per trip day "
+                    "when exact dates are unclear).\n"
+                    f"2. A 2-3 paragraph 'About {dest}' destination overview for the UI.\n"
+                    "Use only facts from the search text. Return structured JSON only."
                 )
             ),
             HumanMessage(
@@ -38,19 +35,10 @@ def extract_weather_node(state: TravelState) -> dict:
             ),
         ]
     )
-    about = ""
-    if text.strip():
-        resp = _about_llm.invoke(
-            [
-                SystemMessage(
-                    content=(
-                        f"Write a 2-3 paragraph 'About {dest}' overview for a trip planner UI. "
-                        "Use only facts from the provided search text. Be concise and helpful."
-                    )
-                ),
-                HumanMessage(content=text[:8000]),
-            ]
-        )
-        about = resp.content or ""
-
-    return {"weather": outlook.model_dump(), "destination_about": about}
+    data = result.model_dump()
+    weather = {
+        "destination": data["destination"],
+        "summary": data["summary"],
+        "days": data["days"],
+    }
+    return {"weather": weather, "destination_about": data.get("destination_about", "")}

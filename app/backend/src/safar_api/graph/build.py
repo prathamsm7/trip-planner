@@ -123,9 +123,10 @@ def compile_graph():
     workflow.add_edge("merge_follow_up_structured", "web_queries")
     workflow.add_edge("web_queries", "transport_search")
     workflow.add_edge("web_queries", "activities_search")
-    workflow.add_edge("transport_search", "planner")
     workflow.add_edge("activities_search", "extract_weather")
-    workflow.add_edge("extract_weather", "planner")
+    # Barrier join: planner must wait for both branches (transport is shallow,
+    # weather is deeper via activities). Separate edges would run planner twice.
+    workflow.add_edge(["transport_search", "extract_weather"], "planner")
     workflow.add_edge("planner", END)
 
     return workflow.compile(checkpointer=_memory)
