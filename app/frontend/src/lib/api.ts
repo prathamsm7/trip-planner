@@ -10,14 +10,6 @@ export async function createThread(): Promise<string> {
 
 export async function getThread(threadId: string): Promise<{
   snapshot: TripSnapshot | null;
-  interrupt: {
-    type?: string;
-    question?: string;
-    index?: number;
-    total?: number;
-    message?: string;
-    questions?: string[];
-  } | null;
 }> {
   const res = await fetch(`${API_URL}/api/threads/${threadId}`);
   return res.json();
@@ -83,14 +75,6 @@ export async function consumeSSE(
 export function streamMessage(threadId: string, content: string, onEvent: (e: StreamEvent) => void) {
   return consumeSSE(
     `${API_URL}/api/threads/${threadId}/messages`,
-    { content },
-    onEvent
-  );
-}
-
-export function streamResume(threadId: string, content: string, onEvent: (e: StreamEvent) => void) {
-  return consumeSSE(
-    `${API_URL}/api/threads/${threadId}/resume`,
     { content },
     onEvent
   );

@@ -20,13 +20,29 @@ class Settings(BaseSettings):
 
     openai_api_key: str = ""
     serpapi_api_key: str = ""
-    # traveltest.ipynb: secondary_llm, flight llm, weather llm
+    tavily_api_key: str = ""
+    # planning_llm: itinerary, research, web answers, trip Q&A
     openai_secondary_model: str = "gpt-5.4-mini-2026-03-17"
-    openai_flight_model: str = "gpt-5-mini-2025-08-07"
+    # utility_llm: weather extraction, airport extraction, chat summarization
     openai_weather_model: str = "gpt-4o-mini"
-    cors_origins: str = "http://localhost:3000"
+    openai_orchestrator_model: str = "gpt-6-luna"
+    agent_max_steps: int = 10
+    serpapi_timeout_s: float = 45.0
+    # Context size controls (token savings)
+    agent_tool_observation_chars: int = 4000
+    agent_summarize_after_messages: int = 24
+    agent_summarize_keep_messages: int = 10
+    agent_clear_tools_trigger_tokens: int = 12000
+    agent_clear_tools_keep: int = 3
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     langsmith_api_key: str = ""
     langsmith_project: str = "trip planner"
+    langsmith_tracing: bool = False
+    langsmith_endpoint: str = "https://api.smith.langchain.com"
+
+    @property
+    def supervisor_model(self) -> str:
+        return self.openai_orchestrator_model or self.openai_secondary_model
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -17,9 +17,22 @@ export function PackageTab({
   selections,
   structured,
 }: Props) {
-  const list = [...(flights?.best_flights ?? []), ...(flights?.other_flights ?? [])];
-  const out = selections.outboundFlightIndex != null ? list[selections.outboundFlightIndex] : null;
-  const ret = selections.returnFlightIndex != null ? list[selections.returnFlightIndex] : null;
+  const outboundList = [
+    ...(flights?.outbound?.best_flights ?? []),
+    ...(flights?.outbound?.other_flights ?? []),
+  ];
+  const returnList = [
+    ...(flights?.return_flights?.best_flights ?? []),
+    ...(flights?.return_flights?.other_flights ?? []),
+  ];
+  const out =
+    selections.outboundFlightIndex != null
+      ? outboundList[selections.outboundFlightIndex]
+      : null;
+  const ret =
+    selections.returnFlightIndex != null
+      ? returnList[selections.returnFlightIndex]
+      : null;
   const hotelList = (selections.hotelIndices ?? [])
     .map((i) => (hotels ?? [])[i])
     .filter(Boolean);
@@ -45,10 +58,18 @@ export function PackageTab({
         />
         <Row label="Travelers" value={String(structured?.number_of_people ?? "—")} />
         <Row
-          label="Flights selected"
+          label="Outbound"
           value={
             out
               ? `${out.flights?.[0]?.airline ?? "Flight"} · ₹${out.price?.toLocaleString("en-IN")}`
+              : "None"
+          }
+        />
+        <Row
+          label="Return"
+          value={
+            ret
+              ? `${ret.flights?.[0]?.airline ?? "Flight"} · ₹${ret.price?.toLocaleString("en-IN")}`
               : "None"
           }
         />

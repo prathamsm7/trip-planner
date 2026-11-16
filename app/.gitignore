@@ -15,3 +15,5 @@ frontend/out/
 # Node + Python local caches (defense in depth — root also covers these)
 node_modules/
 __pycache__/
+
+backend/tests/

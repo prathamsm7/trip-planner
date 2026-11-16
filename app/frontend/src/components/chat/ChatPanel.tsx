@@ -5,18 +5,11 @@ import type { ChatMessage, StepEvent } from "@/lib/types";
 import { TripPackageCard } from "@/components/package/TripPackageCard";
 import { MarkdownMessage } from "@/components/chat/MarkdownMessage";
 
-interface FollowUpInterrupt {
-  question?: string;
-  index?: number;
-  total?: number;
-}
-
 interface Props {
   messages: ChatMessage[];
   steps: StepEvent[];
   isStreaming: boolean;
   showPackageCard: boolean;
-  followUp?: FollowUpInterrupt | null;
   onSend: (text: string) => void;
   onPackageSelect: (tab: "itinerary" | "flights" | "hotels" | "package") => void;
   structured?: Record<string, unknown>;
@@ -27,7 +20,6 @@ export function ChatPanel({
   steps,
   isStreaming,
   showPackageCard,
-  followUp,
   onSend,
   onPackageSelect,
   structured,
@@ -79,14 +71,14 @@ export function ChatPanel({
             <p className="text-xs font-semibold text-gray-500 mb-2">Working on your trip</p>
             <ul className="space-y-1.5">
               {steps.map((s) => (
-                <li key={s.node} className="flex items-center gap-2 text-sm">
+                <li key={s.step_id || s.node} className="flex items-center gap-2 text-sm">
                   <span
                     className={`h-2 w-2 shrink-0 rounded-full ${
                       s.status === "done" ? "bg-green-500" : "bg-amber-400 animate-pulse"
                     }`}
                   />
                   <span className={s.status === "done" ? "text-gray-600" : "text-gray-900"}>
-                    {s.label}
+                    {s.description || s.label}
                   </span>
                 </li>
               ))}
@@ -105,11 +97,6 @@ export function ChatPanel({
             onSelect={onPackageSelect}
           />
         )}
-        {followUp?.total && followUp.total > 1 && (
-          <p className="px-4 pt-2 text-xs text-gray-500">
-            Question {(followUp.index ?? 0) + 1} of {followUp.total}
-          </p>
-        )}
         <div className="p-4">
           <form
             onSubmit={(e) => {
@@ -126,11 +113,7 @@ export function ChatPanel({
               <input
                 name="message"
                 disabled={isStreaming}
-                placeholder={
-                  followUp?.question
-                    ? `Answer: ${followUp.question.length > 60 ? `${followUp.question.slice(0, 57)}…` : followUp.question}`
-                    : "Type your question here..."
-                }
+                placeholder="Type your question here..."
                 className="flex-1 rounded-full border border-gray-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-safar-navy/30"
               />
               <button

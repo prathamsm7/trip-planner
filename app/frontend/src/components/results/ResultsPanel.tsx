@@ -54,7 +54,12 @@ export function ResultsPanel({
     { id: "package", label: "Package" },
   ];
 
-  const hasContent = itinerary || flights?.best_flights?.length || (hotels && hotels.length);
+  const hasFlightOptions =
+    (flights?.outbound?.best_flights?.length ?? 0) > 0 ||
+    (flights?.outbound?.other_flights?.length ?? 0) > 0 ||
+    (flights?.return_flights?.best_flights?.length ?? 0) > 0 ||
+    (flights?.return_flights?.other_flights?.length ?? 0) > 0;
+  const hasContent = itinerary || hasFlightOptions || (hotels && hotels.length);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">

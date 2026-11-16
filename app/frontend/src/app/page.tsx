@@ -34,7 +34,6 @@ export default function HomePage() {
           onSend={trip.sendMessage}
           onPackageSelect={trip.setActiveTab}
           structured={trip.structured}
-          followUp={trip.interrupt}
         />
         <ResultsPanel
           activeTab={trip.activeTab}

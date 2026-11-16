@@ -6,7 +6,6 @@ import {
   getThread,
   patchSelections,
   streamMessage,
-  streamResume,
 } from "@/lib/api";
 import type {
   ChatMessage,
@@ -31,41 +30,6 @@ function mergeSnapshot(prev: TripSnapshot | null, patch: Record<string, unknown>
   return { ...(prev ?? {}), ...patch } as TripSnapshot;
 }
 
-function buildContextualFollowUp(query: string, snapshot: TripSnapshot): string {
-  const q = query.toLowerCase();
-  const hasItinerary = !!snapshot.itinerary;
-  const flights = snapshot.flights_data as Record<string, unknown> | undefined;
-  const hasFlights =
-    ((flights?.best_flights as unknown[]) ?? []).length > 0 ||
-    ((flights?.other_flights as unknown[]) ?? []).length > 0;
-  const hotels = snapshot.hotel_search_results ?? null;
-  const hasHotels = !!hotels && hotels.length > 0;
-
-  if (q.includes("flight")) {
-    return hasFlights
-      ? "Would you like me to shortlist the best 2-3 flight options by price and duration?"
-      : "Want me to try nearby airports or flexible dates to find better flight options?";
-  }
-  if (q.includes("hotel") || q.includes("stay") || q.includes("homestay")) {
-    return hasHotels
-      ? "Would you like recommendations for the best hotel based on location, rating, and budget?"
-      : "Should I widen hotel filters (budget or area) and search again?";
-  }
-  if (
-    q.includes("change") ||
-    q.includes("update") ||
-    q.includes("modify") ||
-    q.includes("add") ||
-    q.includes("day ")
-  ) {
-    return "Would you like me to make another tweak or show a quick summary of exactly what changed?";
-  }
-  if (hasItinerary) {
-    return "Would you like me to refine this plan further for budget, pacing, or food preferences?";
-  }
-  return "Would you like me to plan a trip now with destination, dates, and travel style?";
-}
-
 export function useSafarTrip() {
   const [threadId, setThreadId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([
@@ -83,17 +47,8 @@ export function useSafarTrip() {
   const [selections, setSelections] = useState<Selections>({});
   const [showPackageCard, setShowPackageCard] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [interrupt, setInterrupt] = useState<{
-    question?: string;
-    index?: number;
-    total?: number;
-    questions?: string[];
-    message?: string;
-  } | null>(null);
   const initRef = useRef(false);
   const preStreamSnapshot = useRef<TripSnapshot | null>(null);
-  const lastUserQueryRef = useRef("");
-  const responseSentRef = useRef(false);
 
   useEffect(() => {
     if (initRef.current) return;
@@ -106,18 +61,20 @@ export function useSafarTrip() {
       }
       setThreadId(id);
       try {
-        const { snapshot: snap, interrupt: intr } = await getThread(id);
+        const { snapshot: snap } = await getThread(id);
         if (snap) {
           setSnapshot(snap);
           if (snap.itinerary) setShowPackageCard(true);
           if (snap.selections) setSelections(snap.selections as Selections);
-        }
-        if (intr?.question || intr?.questions?.length) setInterrupt(intr);
-        if (intr?.message) {
-          setMessages((prev) => [
-            ...prev,
-            { id: uid(), role: "assistant", content: intr.message!, kind: "interrupt" },
-          ]);
+          if (snap.messages && snap.messages.length > 0) {
+            setMessages(
+              snap.messages.map((m) => ({
+                id: uid(),
+                role: m.role === "user" ? "user" : "assistant",
+                content: m.content,
+              }))
+            );
+          }
         }
       } catch {
         const newId = await createThread();
@@ -130,14 +87,35 @@ export function useSafarTrip() {
   const handleEvent = useCallback((event: StreamEvent) => {
     if (event.type === "step_start" && event.node && event.label) {
       setSteps((prev) => {
-        const exists = prev.find((s) => s.node === event.node && s.status === "running");
+        const key = event.step_id || event.node!;
+        const exists = prev.find(
+          (s) => (s.step_id || s.node) === key && s.status === "running"
+        );
         if (exists) return prev;
-        return [...prev, { node: event.node!, label: event.label!, status: "running" }];
+        return [
+          ...prev,
+          {
+            node: event.node!,
+            step_id: event.step_id,
+            label: event.label!,
+            description: event.description,
+            status: "running",
+          },
+        ];
       });
     }
     if (event.type === "step_complete" && event.node) {
       setSteps((prev) =>
-        prev.map((s) => (s.node === event.node ? { ...s, status: "done" } : s))
+        prev.map((s) => {
+          const key = event.step_id || event.node!;
+          if ((s.step_id || s.node) !== key && s.node !== event.node) return s;
+          if (event.step_id && s.step_id && s.step_id !== event.step_id) return s;
+          return {
+            ...s,
+            status: "done",
+            description: event.description || s.description,
+          };
+        })
       );
       if (event.payload) {
         setSnapshot((prev) => mergeSnapshot(prev, event.payload as Record<string, unknown>));
@@ -153,101 +131,29 @@ export function useSafarTrip() {
       setShowPackageCard(true);
     }
     if (event.type === "message" && event.content) {
-      responseSentRef.current = true;
       setMessages((prev) => [
         ...prev,
         { id: uid(), role: "assistant", content: event.content! },
       ]);
     }
-    if (event.type === "interrupt") {
-      responseSentRef.current = true;
-      setInterrupt({
-        question: event.question,
-        index: event.index,
-        total: event.total,
-        questions: event.questions,
-        message: event.message,
-      });
-      const text =
-        event.message ??
-        (event.question
-          ? event.question
-          : `I need a few more details:\n${(event.questions ?? []).map((q) => `- ${q}`).join("\n")}`);
-      setMessages((prev) => {
-        const last = prev[prev.length - 1];
-        if (last?.role === "assistant" && last.kind === "interrupt" && last.content === text) {
-          return prev;
-        }
-        return [
-          ...prev,
-          { id: uid(), role: "assistant", content: text, kind: "interrupt" },
-        ];
-      });
-    }
     if (event.type === "done" && event.snapshot) {
       const prev = preStreamSnapshot.current;
       setSnapshot(event.snapshot);
-      setInterrupt(null);
-      let primaryResponseAdded = responseSentRef.current;
 
       const itineraryIsNew = event.snapshot.itinerary && !prev?.itinerary;
       const fd = event.snapshot.flights_data as Record<string, unknown> | undefined;
       const prevFd = prev?.flights_data as Record<string, unknown> | undefined;
-      const flightsAreNew = fd && "best_flights" in fd && !(prevFd && "best_flights" in prevFd);
+      const flightsAreNew =
+        !!fd &&
+        "outbound" in fd &&
+        !(prevFd && "outbound" in prevFd);
       const hotelsAreNew =
         event.snapshot.hotel_search_results != null && prev?.hotel_search_results == null;
 
-      if (itineraryIsNew) {
-        primaryResponseAdded = true;
+      // Tab/package UI only — chat copy comes from the model stream.
+      if (itineraryIsNew || flightsAreNew || hotelsAreNew) {
         setShowPackageCard(true);
-        const summary =
-          (event.snapshot.itinerary as { summary?: string })?.summary ??
-          "Your trip plan is ready. Open the itinerary tab on the right to explore details.";
-        setMessages((prev) => [
-          ...prev,
-          { id: uid(), role: "assistant", content: summary, kind: "text" },
-        ]);
-      } else if (flightsAreNew) {
-        const hasFlights =
-          ((fd?.best_flights as unknown[]) ?? []).length > 0 ||
-          ((fd?.other_flights as unknown[]) ?? []).length > 0;
-        setShowPackageCard(true);
-        if (hasFlights) {
-          primaryResponseAdded = true;
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: uid(),
-              role: "assistant",
-              content: "Flight options are ready — check the flights tab on the right.",
-            },
-          ]);
-        }
-      } else if (hotelsAreNew) {
-        setShowPackageCard(true);
-        if (event.snapshot.hotel_search_results!.length > 0) {
-          primaryResponseAdded = true;
-          setMessages((prev) => [
-            ...prev,
-            {
-              id: uid(),
-              role: "assistant",
-              content: "Hotel options are ready — check the hotels tab on the right.",
-            },
-          ]);
-        }
       }
-
-      if (!primaryResponseAdded) {
-        const followUp = buildContextualFollowUp(lastUserQueryRef.current, event.snapshot);
-        setMessages((prev) => {
-          const last = prev[prev.length - 1];
-          if (last?.role === "assistant" && last.content === followUp) return prev;
-          return [...prev, { id: uid(), role: "assistant", content: followUp }];
-        });
-      }
-
-      responseSentRef.current = false;
     }
     if (event.type === "error") {
       setMessages((prev) => [
@@ -259,23 +165,18 @@ export function useSafarTrip() {
         },
       ]);
     }
-  }, [showPackageCard]);
+  }, []);
 
   const sendMessage = useCallback(
     async (content: string) => {
       if (!threadId || !content.trim() || isStreaming) return;
       preStreamSnapshot.current = snapshot;
-      lastUserQueryRef.current = content.trim();
-      responseSentRef.current = false;
       setMessages((prev) => [...prev, { id: uid(), role: "user", content: content.trim() }]);
       setIsStreaming(true);
       setSteps([]);
 
       try {
-        const runner = interrupt
-          ? streamResume(threadId, content.trim(), handleEvent)
-          : streamMessage(threadId, content.trim(), handleEvent);
-        await runner;
+        await streamMessage(threadId, content.trim(), handleEvent);
       } catch (e) {
         const msg =
           e instanceof Error && e.message.length < 200
@@ -289,7 +190,7 @@ export function useSafarTrip() {
         setIsStreaming(false);
       }
     },
-    [threadId, isStreaming, interrupt, handleEvent]
+    [threadId, isStreaming, handleEvent]
   );
 
   const updateSelections = useCallback(
@@ -310,7 +211,6 @@ export function useSafarTrip() {
     setSteps([]);
     setSelections({});
     setShowPackageCard(false);
-    setInterrupt(null);
     setActiveTab("itinerary");
     setMessages([
       {
@@ -334,7 +234,6 @@ export function useSafarTrip() {
     updateSelections,
     showPackageCard,
     isStreaming,
-    interrupt,
     sendMessage,
     newTrip,
     structured: snapshot?.structured as Record<string, unknown> | undefined,

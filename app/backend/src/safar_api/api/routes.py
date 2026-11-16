@@ -1,3 +1,4 @@
+import logging
 import uuid
 from typing import Any
 
@@ -5,18 +6,16 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from starlette.responses import StreamingResponse
 
-from safar_api.api.serialize import state_to_snapshot
 from safar_api.api.stream import stream_graph
 from safar_api.graph.build import get_graph
+from safar_api.trip.state import snapshot_from_agent_state
+from safar_api.logging_config import log_exception
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
 
 class MessageBody(BaseModel):
-    content: str
-
-
-class ResumeBody(BaseModel):
     content: str
 
 
@@ -26,7 +25,10 @@ class SelectionsBody(BaseModel):
 
 @router.get("/health")
 def health():
-    return {"status": "ok", "service": "safar-ai"}
+    return {
+        "status": "ok",
+        "service": "safar-ai",
+    }
 
 
 @router.post("/threads")
@@ -40,27 +42,14 @@ def get_thread(thread_id: str):
     graph = get_graph()
     config = {"configurable": {"thread_id": thread_id}}
     snapshot = graph.get_state(config)
-    if not snapshot.values and not snapshot.interrupts:
+    if not snapshot.values:
         return {
             "thread_id": thread_id,
             "snapshot": None,
-            "interrupt": None,
-        }
-    interrupt = None
-    if snapshot.interrupts:
-        value = snapshot.interrupts[0].value or {}
-        interrupt = {
-            "type": value.get("type"),
-            "question": value.get("question"),
-            "index": value.get("index"),
-            "total": value.get("total"),
-            "message": value.get("message"),
-            "questions": value.get("questions", []),
         }
     return {
         "thread_id": thread_id,
-        "snapshot": state_to_snapshot(snapshot.values or {}),
-        "interrupt": interrupt,
+        "snapshot": snapshot_from_agent_state(snapshot.values or {}),
     }
 
 
@@ -78,22 +67,27 @@ def _sse_response(gen):
 
 @router.post("/threads/{thread_id}/messages")
 async def post_message(thread_id: str, body: MessageBody):
-    return _sse_response(stream_graph(thread_id, body.content, resume=False))
-
-
-@router.post("/threads/{thread_id}/resume")
-async def post_resume(thread_id: str, body: ResumeBody):
-    return _sse_response(stream_graph(thread_id, body.content, resume=True))
+    return _sse_response(stream_graph(thread_id, body.content))
 
 
 @router.patch("/threads/{thread_id}/selections")
 def patch_selections(thread_id: str, body: SelectionsBody):
-    graph = get_graph()
-    config = {"configurable": {"thread_id": thread_id}}
-    snapshot = graph.get_state(config)
-    if not snapshot.values:
-        raise HTTPException(status_code=404, detail="Thread not found")
-    values = dict(snapshot.values)
-    values["selections"] = body.selections
-    graph.update_state(config, values)
-    return {"thread_id": thread_id, "selections": body.selections}
+    try:
+        graph = get_graph()
+        config = {"configurable": {"thread_id": thread_id}}
+        snapshot = graph.get_state(config)
+        if not snapshot.values:
+            raise HTTPException(status_code=404, detail="Thread not found")
+        # Write only selections so the rest of the trip state stays intact.
+        graph.update_state(config, {"selections": body.selections})
+        return {"thread_id": thread_id, "selections": body.selections}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        log_exception(
+            logger,
+            "patch_selections failed",
+            exc,
+            context={"thread_id": thread_id},
+        )
+        raise HTTPException(status_code=500, detail="Failed to update selections") from exc

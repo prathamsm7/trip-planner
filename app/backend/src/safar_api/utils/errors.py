@@ -22,10 +22,13 @@ def friendly_error(exc: BaseException) -> str:
             "I hit an issue preparing your trip. Please add destination and dates, "
             "or try your request again."
         )
-    if "no interrupt" in lower:
-        return "Please send your answer in the chat so I can continue planning."
+    if "toolmessage" in lower and "command.update" in lower:
+        return (
+            "I hit an issue coordinating tools for that request. "
+            "Please try again in a moment."
+        )
 
-    if len(raw) > 160:
-        return "Something went wrong while processing your request. Please try again."
-
-    return raw.strip() or "Something went wrong. Please try again."
+    cleaned = raw.strip()
+    if len(cleaned) > 220:
+        return cleaned[:217].rstrip() + "..."
+    return cleaned or "Something went wrong. Please try again."

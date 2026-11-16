@@ -306,3 +306,6 @@ logs/
 tmp/
 .tmp/
 *.tmp
+
+
+app/backend/tests/

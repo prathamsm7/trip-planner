@@ -1,26 +1,18 @@
-"""Input & output guardrails for Safar AI.
+"""Input and output checks for Safar AI.
 
-Input guardrail runs BEFORE intent classification and catches:
-  - Prompt injection / jailbreak attempts
-  - API key / secret exfiltration requests
-  - System prompt disclosure requests
-  - Unsafe / harmful content
-
-Output guardrail runs AFTER LLM responses and sanitizes:
-  - Leaked system prompts or internal state
-  - Accidental exposure of keys, env vars, or technical internals
+Input rules block jailbreaks, secret requests, and harmful requests before
+the supervisor runs. Output sanitizing runs on every assistant message before
+it is streamed or returned in a snapshot. It redacts key-shaped tokens and
+replaces replies that leak internals. Travel wording such as "import duties"
+is left intact.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Any, Literal
 
-from langchain_core.messages import AIMessage
-
-from safar_api.models.state import TravelState
-
-GuardrailAction = Literal["allow", "block", "redirect"]
+GuardrailAction = Literal["allow", "block"]
 
 _BLOCK_RESPONSE = (
     "I'm Safar AI, your trip planning assistant. "
@@ -29,25 +21,18 @@ _BLOCK_RESPONSE = (
     "How can I help you plan your next trip?"
 )
 
-_REDIRECT_RESPONSE = (
-    "That's an interesting question, but I'm designed specifically for trip planning. "
-    "I can help you plan a trip, find flights, search hotels, check weather, "
-    "or answer questions about your travel plans. What would you like to do?"
+_SAFE_FALLBACK = (
+    "I can only share information about your trip. "
+    "Is there anything about your travel plans I can help with?"
 )
 
-# ── Input patterns ──────────────────────────────────────────────────
-
+# Ask for *our* secrets or a dump of config. Bare words like "password" are
+# normal in travel questions ("hotel wifi password") and must not match.
 _SECRET_PATTERNS = [
-    r"api[_\s-]?key",
-    r"secret[_\s-]?key",
-    r"password",
-    r"credentials",
-    r"env[_\s-]?var",
-    r"environment\s+variable",
-    r"\.env\b",
-    r"openai[_\s-]?key",
-    r"serpapi[_\s-]?key",
-    r"access[_\s-]?token",
+    r"(?:your|the|our)\s+(?:api[_\s-]?key|secret[_\s-]?key|openai[_\s-]?key|serpapi[_\s-]?key|access[_\s-]?token)",
+    r"(?:show|give|reveal|print|dump|leak|send)\s+(?:me\s+)?(?:your\s+|the\s+)?(?:api[_\s-]?key|secret[_\s-]?key|\.env\b|env(?:ironment)?\s+variables?|access[_\s-]?token)",
+    r"\b(?:openai|serpapi)[_\s-]?api[_\s-]?key\b",
+    r"what(?:'s| is)\s+in\s+(?:your\s+)?\.env\b",
 ]
 
 _PROMPT_DISCLOSURE_PATTERNS = [
@@ -56,18 +41,15 @@ _PROMPT_DISCLOSURE_PATTERNS = [
     r"initial\s+prompt",
     r"original\s+instruction",
     r"internal\s+instruction",
-    r"give\s+me\s+(?:the\s+)?(?:your\s+)?prompt",
-    r"show\s+me\s+(?:the\s+)?(?:your\s+)?prompt",
-    r"what\s+(?:is|are)\s+your\s+(?:system\s+)?instructions",
-    r"reveal\s+(?:your\s+)?(?:system\s+)?prompt",
-    r"print\s+(?:your\s+)?(?:system\s+)?prompt",
-    r"repeat\s+(?:your\s+)?(?:system\s+)?(?:prompt|instructions)",
+    r"(?:give|show|reveal|print|repeat)\s+(?:me\s+)?(?:the\s+|your\s+)?system\s+prompt",
+    r"(?:give|show|reveal|print|repeat)\s+(?:me\s+)?your\s+(?:system\s+)?(?:prompt|instructions)\b",
+    r"what\s+(?:is|are)\s+your\s+(?:system\s+)?(?:prompt|instructions)\b",
 ]
 
 _JAILBREAK_PATTERNS = [
-    r"ignore\s+(?:all\s+)?(?:previous\s+)?(?:your\s+)?instructions",
-    r"forget\s+(?:all\s+)?(?:previous\s+)?(?:your\s+)?(?:instructions|rules|prompt)",
-    r"disregard\s+(?:all\s+)?(?:previous\s+)?(?:your\s+)?(?:instructions|rules)",
+    r"ignore\s+(?:all\s+)?(?:previous\s+|your\s+)?instructions",
+    r"forget\s+(?:all\s+)?(?:previous\s+|your\s+)?(?:instructions|rules|prompt)",
+    r"disregard\s+(?:all\s+)?(?:previous\s+|your\s+)?(?:instructions|rules)",
     r"bypass\s+(?:your\s+)?(?:safety|restrictions|rules|filters)",
     r"pretend\s+you\s+(?:are|have)\s+no\s+(?:rules|restrictions|limits)",
     r"act\s+as\s+(?:if\s+)?(?:you\s+)?(?:have\s+)?no\s+(?:rules|restrictions)",
@@ -80,20 +62,56 @@ _JAILBREAK_PATTERNS = [
     r"roleplay\s+as\s+(?:a\s+)?(?:different|new|another)",
 ]
 
+# Requests to *do* harm. Mentions of laws, visas, or customs stay allowed.
 _UNSAFE_PATTERNS = [
     r"how\s+to\s+(?:hack|steal|break\s+into|exploit)",
-    r"generate\s+(?:malware|virus|exploit|phishing)",
-    r"illegal\s+(?:activity|substance|drug)",
+    r"(?:write|generate|create)\s+(?:a\s+)?(?:malware|virus|exploit|phishing)",
+    r"how\s+to\s+(?:buy|make|smuggle)\s+(?:illegal\s+)?(?:drugs|weapons)",
 ]
+
+# Whole-reply replacement. Do not match ordinary travel words ("import duties").
+_OUTPUT_LEAK_PATTERNS = [
+    r"system\s*prompt",
+    r"OPENAI_API_KEY",
+    r"SERPAPI_API_KEY",
+    r"MEM0_API_KEY",
+    r"api_key\s*=",
+    r"\bTravelState\b",
+    r"\bfollow_up_questions\b",
+    r"\buser_current_intent\b",
+    r"\bguardrail_action\b",
+    r"safar_api\.",
+    r"def\s+\w+_node\(",
+    r"\b(?:langgraph|langchain|structured_output)\b",
+]
+
+_SECRET_TOKEN = re.compile(
+    r"\b(?:sk-[A-Za-z0-9_\-]{12,}|sk-proj-[A-Za-z0-9_\-]{12,})\b"
+)
+
+def message_text(content: Any) -> str:
+    """Flatten message content to text. List/multimodal content must not crash."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                parts.append(str(item.get("text") or ""))
+        return "\n".join(p for p in parts if p)
+    return str(content)
 
 
 def _matches_any(text: str, patterns: list[str]) -> bool:
-    lower = text.lower()
-    return any(re.search(p, lower) for p in patterns)
+    return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
 
 
-def check_input(text: str) -> tuple[GuardrailAction, str]:
-    """Classify user input and return (action, reason)."""
+def rule_check(text: str) -> tuple[GuardrailAction, str] | None:
+    """Block jailbreaks, secret requests, and harmful requests. None means allow."""
     if _matches_any(text, _SECRET_PATTERNS):
         return "block", "secret_request"
     if _matches_any(text, _PROMPT_DISCLOSURE_PATTERNS):
@@ -102,70 +120,32 @@ def check_input(text: str) -> tuple[GuardrailAction, str]:
         return "block", "jailbreak"
     if _matches_any(text, _UNSAFE_PATTERNS):
         return "block", "unsafe_content"
-    return "allow", "ok"
+    return None
 
 
-# ── Output patterns ─────────────────────────────────────────────────
+def evaluate_input(text: str) -> tuple[GuardrailAction, str]:
+    """Apply input rules. Travel messages are allowed unless a rule matches."""
+    text = message_text(text).strip()
+    if not text:
+        return "allow", "empty"
 
-_OUTPUT_LEAK_PATTERNS = [
-    r"system\s*prompt",
-    r"OPENAI_API_KEY",
-    r"SERPAPI_API_KEY",
-    r"api_key\s*=",
-    r"\.env\b",
-    r"pydantic",
-    r"BaseModel",
-    r"TravelState",
-    r"LangGraph",
-    r"langgraph",
-    r"langchain",
-    r"structured_output",
-    r"follow_up_questions",
-    r"user_current_intent",
-    r"safar_api\.",
-    r"def\s+\w+_node\(",
-    r"import\s+\w+",
-]
+    ruled = rule_check(text)
+    if ruled is not None:
+        return ruled
+    return "allow", "allow"
+
+
+def refusal_message(action: GuardrailAction) -> str | None:
+    if action == "block":
+        return _BLOCK_RESPONSE
+    return None
 
 
 def sanitize_output(text: str) -> str:
-    """If the response contains leaked internals, replace it entirely."""
-    if any(re.search(p, text, re.IGNORECASE) for p in _OUTPUT_LEAK_PATTERNS):
-        return (
-            "I can only share information about your trip. "
-            "Is there anything about your travel plans I can help with?"
-        )
-    return text
-
-
-# ── Graph node ───────────────────────────────────────────────────────
-
-def guardrail_node(state: TravelState) -> dict:
-    """Input guardrail — runs before intent classification."""
-    latest = state.messages[-1]
-    text = latest.content if hasattr(latest, "content") else str(latest)
-    action, reason = check_input(text)
-
-    if action == "block":
-        return {
-            "guardrail_action": action,
-            "messages": [AIMessage(content=_BLOCK_RESPONSE)],
-        }
-    if action == "redirect":
-        return {
-            "guardrail_action": action,
-            "messages": [AIMessage(content=_REDIRECT_RESPONSE)],
-        }
-    return {"guardrail_action": "allow"}
-
-
-def guardrail_route(state: TravelState) -> str:
-    action = getattr(state, "guardrail_action", "allow")
-    if action in ("block", "redirect"):
-        return "guardrail_respond"
-    return "extract_user_intent"
-
-
-def guardrail_respond(state: TravelState) -> dict:
-    """Terminal node for blocked/redirected messages — just passes through."""
-    return {}
+    """Redact leaked secrets. Replace the reply only when internals are exposed."""
+    if not text:
+        return text
+    cleaned = _SECRET_TOKEN.sub("[redacted]", text)
+    if any(re.search(pattern, cleaned, re.IGNORECASE) for pattern in _OUTPUT_LEAK_PATTERNS):
+        return _SAFE_FALLBACK
+    return cleaned

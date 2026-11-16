@@ -1,6 +1,6 @@
 "use client";
 
-import type { FlightsData, FlightOption, Selections } from "@/lib/types";
+import type { FlightsData, FlightOption, FlightLegBundle, Selections } from "@/lib/types";
 
 interface Props {
   flights?: FlightsData;
@@ -10,14 +10,21 @@ interface Props {
   onSelections: (s: Selections) => void;
 }
 
+function legList(leg?: FlightLegBundle | null) {
+  return [...(leg?.best_flights ?? []), ...(leg?.other_flights ?? [])];
+}
+
 export function FlightsTab({ flights, source, dest, selections, onSelections }: Props) {
-  const list = [...(flights?.best_flights ?? []), ...(flights?.other_flights ?? [])];
   const depCode = flights?.airport_meta?.departure_airport_code ?? source.slice(0, 3).toUpperCase();
   const arrCode = flights?.airport_meta?.arrival_airport_code ?? dest.slice(0, 3).toUpperCase();
 
-  const hasSearched = flights != null && "best_flights" in flights;
+  const outboundList = legList(flights?.outbound);
+  const returnList = legList(flights?.return_flights);
 
-  if (!list.length) {
+  const hasSearched =
+    flights != null && ("outbound" in flights || "return_flights" in flights);
+
+  if (!outboundList.length && !returnList.length) {
     if (!hasSearched) {
       return (
         <p className="text-sm text-gray-500">
@@ -27,7 +34,11 @@ export function FlightsTab({ flights, source, dest, selections, onSelections }: 
     }
 
     const alternatives = (flights as Record<string, unknown> | undefined)?.alternatives as
-      | { nearby_airports?: { name: string; code: string; location: string }[]; railway_stations?: { name: string; code: string; location: string }[]; suggestions?: string[] }
+      | {
+          nearby_airports?: { name: string; code: string; location: string }[];
+          railway_stations?: { name: string; code: string; location: string }[];
+          suggestions?: string[];
+        }
       | undefined;
 
     if (alternatives?.suggestions?.length) {
@@ -50,20 +61,11 @@ export function FlightsTab({ flights, source, dest, selections, onSelections }: 
               <p className="text-xs font-medium text-blue-700 mb-2">Nearby airports</p>
               <div className="flex flex-wrap gap-2">
                 {alternatives.nearby_airports.map((ap) => (
-                  <span key={ap.code} className="text-xs bg-white px-2 py-1 rounded border border-blue-200">
+                  <span
+                    key={ap.code}
+                    className="text-xs bg-white px-2 py-1 rounded border border-blue-200"
+                  >
                     {ap.name} ({ap.code})
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-          {alternatives.railway_stations && alternatives.railway_stations.length > 0 && (
-            <div className="mt-2 p-3 bg-green-50 rounded-lg">
-              <p className="text-xs font-medium text-green-700 mb-2">Nearest railway stations</p>
-              <div className="flex flex-wrap gap-2">
-                {alternatives.railway_stations.map((rs) => (
-                  <span key={rs.code} className="text-xs bg-white px-2 py-1 rounded border border-green-200">
-                    {rs.name} ({rs.code})
                   </span>
                 ))}
               </div>
@@ -83,6 +85,72 @@ export function FlightsTab({ flights, source, dest, selections, onSelections }: 
     );
   }
 
+  return (
+    <div className="space-y-8">
+      <LegSection
+        title={`Outbound · ${depCode} → ${arrCode}${legDateLabel(outboundList) ? ` · ${legDateLabel(outboundList)}` : ""}`}
+        emptyText="No outbound flights found for these dates."
+        list={outboundList}
+        selectedIndex={selections.outboundFlightIndex ?? null}
+        onSelect={(index) =>
+          onSelections({ ...selections, outboundFlightIndex: index })
+        }
+      />
+      <LegSection
+        title={`Return · ${arrCode} → ${depCode}${legDateLabel(returnList) ? ` · ${legDateLabel(returnList)}` : ""}`}
+        emptyText="No return flights found for these dates."
+        list={returnList}
+        selectedIndex={selections.returnFlightIndex ?? null}
+        onSelect={(index) =>
+          onSelections({ ...selections, returnFlightIndex: index })
+        }
+      />
+    </div>
+  );
+}
+
+function splitStamp(time?: string): { date: string; clock: string } {
+  if (!time) return { date: "", clock: "—" };
+  const match = time.match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+  if (!match) return { date: "", clock: time.slice(0, 5) || "—" };
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const day = String(Number(match[3]));
+  const month = months[Number(match[2]) - 1] ?? match[2];
+  return { date: `${day} ${month}`, clock: `${match[4]}:${match[5]}` };
+}
+
+function legDateLabel(list: FlightOption[]): string {
+  const dates = new Set(
+    list
+      .map((flight) => splitStamp(flight.flights?.[0]?.departure_airport?.time).date)
+      .filter(Boolean),
+  );
+  if (dates.size === 1) return [...dates][0];
+  return "";
+}
+
+function LegSection({
+  title,
+  emptyText,
+  list,
+  selectedIndex,
+  onSelect,
+}: {
+  title: string;
+  emptyText: string;
+  list: FlightOption[];
+  selectedIndex: number | null;
+  onSelect: (index: number) => void;
+}) {
+  if (!list.length) {
+    return (
+      <section>
+        <h3 className="text-sm font-semibold text-gray-800 mb-2">{title}</h3>
+        <p className="text-sm text-gray-500">{emptyText}</p>
+      </section>
+    );
+  }
+
   const cheapest = list.reduce((min, f, i) => {
     const p = f.price ?? Infinity;
     return p < (list[min]?.price ?? Infinity) ? i : min;
@@ -93,83 +161,48 @@ export function FlightsTab({ flights, source, dest, selections, onSelections }: 
   }, 0);
 
   return (
-    <div>
-      <p className="text-sm font-medium text-gray-700 mb-4">Round trip selection</p>
-      <div className="grid grid-cols-2 gap-3 mb-6">
-        <LegBox
-          label={`${depCode} → ${arrCode}`}
-          selected={selections.outboundFlightIndex != null}
-        />
-        <LegBox
-          label={`${arrCode} → ${depCode}`}
-          selected={selections.returnFlightIndex != null}
-        />
+    <section>
+      <div className="flex items-center justify-between gap-3 mb-3">
+        <h3 className="text-sm font-semibold text-gray-800">{title}</h3>
+        <p className="text-xs text-gray-500">
+          {selectedIndex != null ? "Flight selected" : "Select one option"}
+        </p>
       </div>
-
       <div className="space-y-3">
         {list.map((flight, index) => (
           <FlightCard
-            key={index}
+            key={`${title}-${index}`}
             flight={flight}
-            index={index}
             badges={[
               index === cheapest ? "Cheapest" : null,
               index === fastest ? "Fastest" : null,
             ].filter(Boolean) as string[]}
-            selected={
-              selections.outboundFlightIndex === index ||
-              selections.returnFlightIndex === index
-            }
-            onSelect={() => {
-              const next = { ...selections };
-              if (next.outboundFlightIndex == null) {
-                next.outboundFlightIndex = index;
-              } else if (next.returnFlightIndex == null && next.outboundFlightIndex !== index) {
-                next.returnFlightIndex = index;
-              } else {
-                next.outboundFlightIndex = index;
-                next.returnFlightIndex = null;
-              }
-              onSelections(next);
-            }}
+            selected={selectedIndex === index}
+            onSelect={() => onSelect(index)}
           />
         ))}
       </div>
-    </div>
-  );
-}
-
-function LegBox({ label, selected }: { label: string; selected: boolean }) {
-  return (
-    <div
-      className={`rounded-lg border-2 border-dashed p-4 text-center text-sm ${
-        selected ? "border-green-500 bg-green-50" : "border-gray-300"
-      }`}
-    >
-      <p className="font-medium">{label}</p>
-      <p className="text-xs text-gray-500 mt-1">
-        {selected ? "Flight selected" : "Please select a flight for this leg"}
-      </p>
-    </div>
+    </section>
   );
 }
 
 function FlightCard({
   flight,
-  index,
   badges,
   selected,
   onSelect,
 }: {
   flight: FlightOption;
-  index: number;
   badges: string[];
   selected: boolean;
   onSelect: () => void;
 }) {
   const leg = flight.flights?.[0];
   const dep = leg?.departure_airport;
-  const arr = leg?.arrival_airport;
+  const last = flight.flights?.[flight.flights.length - 1];
+  const finalArr = last?.arrival_airport ?? leg?.arrival_airport;
+  const departs = splitStamp(dep?.time);
+  const arrives = splitStamp(finalArr?.time);
 
   return (
     <div
@@ -189,18 +222,23 @@ function FlightCard({
           </div>
           <p className="font-semibold text-sm">
             {leg?.airline} {leg?.flight_number}
+            {(flight.flights?.length ?? 0) > 1
+              ? ` · ${(flight.flights?.length ?? 1) - 1} stop`
+              : " · Non-stop"}
           </p>
           <div className="flex items-center gap-4 mt-2 text-sm">
             <div>
-              <p className="font-medium">{dep?.time?.slice(11, 16) ?? "—"}</p>
+              <p className="font-medium">{departs.clock}</p>
+              {departs.date ? <p className="text-gray-500 text-xs">{departs.date}</p> : null}
               <p className="text-gray-500 text-xs">{dep?.id}</p>
             </div>
             <span className="text-gray-400">
               {flight.total_duration ? `${flight.total_duration} min` : "—"}
             </span>
             <div>
-              <p className="font-medium">{arr?.time?.slice(11, 16) ?? "—"}</p>
-              <p className="text-gray-500 text-xs">{arr?.id}</p>
+              <p className="font-medium">{arrives.clock}</p>
+              {arrives.date ? <p className="text-gray-500 text-xs">{arrives.date}</p> : null}
+              <p className="text-gray-500 text-xs">{finalArr?.id}</p>
             </div>
           </div>
         </div>
@@ -208,7 +246,7 @@ function FlightCard({
           <p className="text-lg font-bold">
             ₹{flight.price?.toLocaleString("en-IN") ?? "—"}
           </p>
-          <p className="text-xs text-gray-500">{flight.type ?? "Round trip"}</p>
+          <p className="text-xs text-gray-500">{flight.type ?? "One way"}</p>
           <button
             type="button"
             onClick={onSelect}

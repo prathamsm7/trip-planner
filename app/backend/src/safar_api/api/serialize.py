@@ -1,59 +1,50 @@
 from typing import Any
 
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
-
-def message_to_dict(msg: BaseMessage) -> dict[str, Any]:
-    role = "assistant"
-    if isinstance(msg, HumanMessage):
-        role = "user"
-    elif isinstance(msg, AIMessage):
-        role = "assistant"
-    return {
-        "role": role,
-        "content": msg.content if isinstance(msg.content, str) else str(msg.content),
-        "id": getattr(msg, "id", None),
-    }
-
-
-def state_to_snapshot(values: dict[str, Any]) -> dict[str, Any]:
-    messages = values.get("messages") or []
-    return {
-        "structured": values.get("structured"),
-        "follow_up_answers": values.get("follow_up_answers"),
-        "weather": values.get("weather"),
-        "destination_about": values.get("destination_about"),
-        "itinerary": values.get("itinerary"),
-        "transport_results": values.get("transport_results"),
-        "activities_results": values.get("activities_results"),
-        "user_current_intent": values.get("user_current_intent"),
-        "hotel_search_results": values.get("hotel_search_results"),
-        "flights_data": values.get("flights_data"),
-        "selections": values.get("selections"),
-        "messages": [message_to_dict(m) for m in messages],
-    }
+def _artifact_patch(kind: str, update: dict[str, Any]) -> dict[str, Any]:
+    """Map a saved artifact onto the field name the results panel reads."""
+    artifact = update.get(kind)
+    if artifact is None:
+        return {}
+    data = artifact.data if hasattr(artifact, "data") else (artifact or {}).get("data")
+    if not isinstance(data, dict):
+        return {}
+    if kind == "flights":
+        return {"flights_data": data}
+    if kind == "stays":
+        return {"hotel_search_results": data.get("properties") or []}
+    if kind == "itinerary":
+        return {"itinerary": data}
+    if kind == "weather":
+        return {"weather": data}
+    if kind == "research":
+        return {"destination_about": data.get("overview") or ""}
+    return {}
 
 
 def patch_for_node(node: str, update: dict[str, Any] | None) -> dict[str, Any]:
-    """Extract UI-relevant payload from a node update."""
+    """Extract UI-relevant payload from a supervisor or tool update."""
+    del node
     if not update:
         return {}
-    keys = {
-        "guardrail": [],
-        "guardrail_respond": ["messages"],
-        "parser": ["structured"],
-        "follow_up_questions": ["follow_up_answers", "follow_up_index"],
-        "merge_follow_up_structured": ["structured", "follow_up_answers", "follow_up_index"],
-        "web_queries": [],
-        "transport_search": ["transport_results"],
-        "activities_search": ["activities_results"],
-        "extract_weather": ["weather", "destination_about"],
-        "planner": ["itinerary"],
-        "flight_search": ["flights_data"],
-        "hotel_search": ["hotel_search_results"],
-        "modify_itinerary": ["structured"],
-        "extract_user_intent": ["user_current_intent"],
-        "session_faq": ["messages"],
-    }
-    allowed = keys.get(node, list(update.keys()))
-    return {k: update[k] for k in allowed if k in update}
+
+    patch: dict[str, Any] = {}
+    if update.get("messages"):
+        patch["messages"] = update["messages"]
+    brief = update.get("brief")
+    if brief is not None:
+        if hasattr(brief, "to_ui_trip"):
+            patch["structured"] = brief.to_ui_trip()
+        elif isinstance(brief, dict):
+            from safar_api.trip.brief import TripBrief
+
+            payload = dict(brief)
+            if isinstance(payload.get("stated"), list):
+                payload["stated"] = set(payload["stated"])
+            patch["structured"] = TripBrief.model_validate(payload).to_ui_trip()
+    for kind in ("research", "weather", "flights", "stays", "itinerary"):
+        if kind in update:
+            patch.update(_artifact_patch(kind, update))
+    if update.get("last_step_detail"):
+        patch["description"] = update["last_step_detail"]
+    return patch
