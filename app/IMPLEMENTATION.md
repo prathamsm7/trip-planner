@@ -7,19 +7,19 @@
 | Phase | Description | Status |
 |-------|-------------|--------|
 | 0 | Scaffold, single `npm run dev` | Done |
-| 1 | LangGraph port from `traveltest.ipynb` | Done |
+| 1 | Supervisor trip agent | Done |
 | 2 | FastAPI + SSE streaming | Done |
 | 3 | Next.js chat + step progress | Done |
 | 4 | Right panel tabs + package card | Done |
-| 5 | Weather extract, FAQ stub | Done |
+| 5 | Weather extract | Done |
 
 ## Decisions
 
 - Brand: **Safar AI**
 - No floating package bar (v1)
 - Itinerary sub-tabs: Overview + Daily Plan only
-- Resume: LLM maps natural language → `{question: answer}`
-- `modify_itinerary` → auto-open itinerary tab in UI
+- Missing trip details are asked in the normal chat
+- A finished itinerary opens the itinerary tab
 
 ## Dev
 

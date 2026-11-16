@@ -15,4 +15,3 @@ class FlightSearchOutput(BaseModel):
     departure_airport_name: str
     arrival_airport_name: str
     other_airports: list[LocationDetails] = Field(default_factory=list)
-    nearest_railway_station: list[LocationDetails] = Field(default_factory=list)

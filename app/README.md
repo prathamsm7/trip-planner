@@ -29,7 +29,7 @@ npm run dev
 
 ## Structure
 
-- `backend/` — FastAPI + LangGraph (ported from `../traveltest.ipynb`)
+- `backend/` — FastAPI + supervisor agent
 - `frontend/` — Next.js UI
 - `IMPLEMENTATION.md` — phase tracker
 
@@ -37,4 +37,3 @@ npm run dev
 
 - MVP uses in-memory checkpoints (`thread_id` in localStorage).
 - No floating package bar in v1.
-- Notebook at repo root is unchanged for experiments.

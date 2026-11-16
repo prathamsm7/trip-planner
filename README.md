@@ -6,8 +6,6 @@ Safar AI is a conversation-based trip planning application with:
 - **Backend**: FastAPI + LangGraph + OpenAI + SerpAPI
 - **Streaming UX**: SSE (Server-Sent Events) for step-by-step assistant progress
 
-The repo also includes an experiment notebook (`traveltest.ipynb`) used during prototyping.
-
 ## Project Structure
 
 ```text
@@ -16,10 +14,10 @@ trip-planner/
 │   ├── backend/                  # FastAPI + LangGraph API
 │   │   ├── src/safar_api/
 │   │   │   ├── api/              # Routes, stream helpers, serializers
-│   │   │   ├── graph/            # LangGraph builder
-│   │   │   ├── models/           # State + schemas
-│   │   │   ├── nodes/            # Agent node logic (planner, weather, flights, hotels, FAQ)
-│   │   │   └── services/         # LLM + SerpAPI wrappers
+│   │   │   ├── agents/           # Supervisor and specialist tools
+│   │   │   ├── graph/            # Supervisor graph
+│   │   │   ├── trip/             # Trip brief and saved results
+│   │   │   └── services/         # LLM, SerpAPI, and weather clients
 │   │   └── pyproject.toml
 │   ├── frontend/                 # Next.js UI
 │   │   ├── src/app/              # App router entry
@@ -29,7 +27,6 @@ trip-planner/
 │   ├── .env.example
 │   ├── package.json              # Monorepo-like convenience scripts
 │   └── README.md
-├── traveltest.ipynb
 └── README.md
 ```
 
@@ -39,8 +36,8 @@ trip-planner/
 - Itinerary generation
 - Flight and hotel suggestions
 - Weather summary integration
-- Follow-up / clarification flow
-- Live step progress from backend graph execution
+- The supervisor asks for missing details in the same chat
+- Live step progress from the supervisor tools
 - Thread-based chat continuity
 
 ## Tech Stack
@@ -155,9 +152,8 @@ Base path: `/api`
 
 - `GET /api/health` - health check
 - `POST /api/threads` - create thread id
-- `GET /api/threads/{thread_id}` - fetch thread snapshot + pending interrupt
-- `POST /api/threads/{thread_id}/messages` - stream graph run (SSE)
-- `POST /api/threads/{thread_id}/resume` - resume after follow-up answer (SSE)
+- `GET /api/threads/{thread_id}` - fetch the saved trip snapshot
+- `POST /api/threads/{thread_id}/messages` - stream one chat turn (SSE)
 - `PATCH /api/threads/{thread_id}/selections` - persist selected hotels/flights
 
 ## Deployment Guide (Vercel + Railway)
@@ -218,8 +214,7 @@ Ensure your `.gitignore` does not accidentally ignore nested `lib/` directories 
 
 ## Notes
 
-- LangGraph thread state is currently in-memory and keyed by `thread_id`.
-- `traveltest.ipynb` is preserved for experimentation and reference.
+- Chat memory is in-memory and keyed by `thread_id`.
 
 ## Contributing
 

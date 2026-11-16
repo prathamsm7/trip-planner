@@ -119,13 +119,9 @@ class FlightLegBundle(BaseModel):
 class FlightsResult(BaseModel):
     outbound: FlightLegBundle = Field(default_factory=FlightLegBundle)
     return_flights: FlightLegBundle = Field(default_factory=FlightLegBundle)
-    # Compat aliases (outbound) for older UI / summaries.
-    best_flights: list[dict[str, Any]] = Field(default_factory=list)
-    other_flights: list[dict[str, Any]] = Field(default_factory=list)
     airports: list[Any] = Field(default_factory=list)
     airport_meta: dict[str, Any] = Field(default_factory=dict)
     alternatives: dict[str, Any] = Field(default_factory=dict)
-    shortlist: list[FlightShortlistItem] = Field(default_factory=list)
 
 
 class StayShortlistItem(BaseModel):

@@ -7,10 +7,10 @@ from datetime import datetime
 from typing import Any
 
 
-def _flight_list(bundle: dict | None, fallback_best: list | None = None, fallback_other: list | None = None) -> list[dict]:
-    if isinstance(bundle, dict):
-        return list(bundle.get("best_flights") or []) + list(bundle.get("other_flights") or [])
-    return list(fallback_best or []) + list(fallback_other or [])
+def _flight_list(bundle: dict | None) -> list[dict]:
+    if not isinstance(bundle, dict):
+        return []
+    return list(bundle.get("best_flights") or []) + list(bundle.get("other_flights") or [])
 
 
 def _summarize_flight(flight: dict | None) -> dict[str, Any] | None:
@@ -54,9 +54,7 @@ def _option_lists(state: dict[str, Any]) -> tuple[list[dict], list[dict], list[d
         flights_data = flights_art.get("data") or flights_art
 
     outbound = _flight_list(
-        flights_data.get("outbound") if isinstance(flights_data.get("outbound"), dict) else None,
-        flights_data.get("best_flights"),
-        flights_data.get("other_flights"),
+        flights_data.get("outbound") if isinstance(flights_data.get("outbound"), dict) else None
     )
     return_list = _flight_list(
         flights_data.get("return_flights")

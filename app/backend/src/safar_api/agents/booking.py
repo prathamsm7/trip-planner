@@ -437,8 +437,8 @@ def _search_flights(call: dict[str, Any], state: AgentState) -> AgentResult:
             )
             outbound_bundle = flight_results.get("outbound") or {}
             return_bundle = flight_results.get("return") or {}
-            outbound_best = outbound_bundle.get("best_flights") or flight_results.get("best_flights") or []
-            outbound_other = outbound_bundle.get("other_flights") or flight_results.get("other_flights") or []
+            outbound_best = outbound_bundle.get("best_flights") or []
+            outbound_other = outbound_bundle.get("other_flights") or []
             return_best = return_bundle.get("best_flights") or []
             return_other = return_bundle.get("other_flights") or []
             outbound_shortlist = _flight_shortlist(outbound_best, outbound_other)
@@ -456,14 +456,11 @@ def _search_flights(call: dict[str, Any], state: AgentState) -> AgentResult:
             result = FlightsResult(
                 outbound=outbound,
                 return_flights=return_flights,
-                best_flights=outbound_best,
-                other_flights=outbound_other,
                 airports=flight_results.get("airports") or [],
                 airport_meta={
                     "departure_airport_code": dep_id,
                     "arrival_airport_code": arr_id,
                 },
-                shortlist=outbound_shortlist,
                 alternatives={
                     "nearby_airports": _nearby_airport_entries(
                         nearby, exclude={dep_id, arr_id}

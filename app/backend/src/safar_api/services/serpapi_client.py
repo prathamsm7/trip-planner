@@ -136,9 +136,6 @@ def search_round_trip_flights(
             "best_flights": return_best,
             "other_flights": return_other,
         },
-        # Same outbound list at the top level for readers that expect one list.
-        "best_flights": outbound_best,
-        "other_flights": outbound_other,
         "airports": airports,
     }
 

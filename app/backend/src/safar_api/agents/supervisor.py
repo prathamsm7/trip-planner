@@ -121,10 +121,6 @@ def current_trip_text(state: dict) -> str:
             return_count = len(return_flights.get("best_flights") or []) + len(
                 return_flights.get("other_flights") or []
             )
-            if not outbound_count and not return_count:
-                outbound_count = len(data.get("best_flights") or []) + len(
-                    data.get("other_flights") or []
-                )
             route = (
                 f"{meta.get('departure_airport_code') or '?'}→"
                 f"{meta.get('arrival_airport_code') or '?'}"
