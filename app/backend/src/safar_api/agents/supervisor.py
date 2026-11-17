@@ -320,6 +320,8 @@ def search_flights(
     Call ONLY when flights are missing or stale, the user asks to search/refresh, or they change airports or dates.
     Do NOT call to choose among flights already listed — use select_options.
     Pass IATA codes only when the user names airports. refresh=True only for a new search.
+    If this tool reports no flights, ask the user which listed airport to use. Do not search another airport until they choose.
+
     """
     emit_tool_start(runtime, "search_flights")
     state = runtime.state if runtime else {}
@@ -516,6 +518,9 @@ Today's date: {today}
 Your only responsibility is to assist the user with their trip planning needs.
 Provide assistance only related to the trip planning, and do not provide any other information.
 Say no to any questions that are not related to trip planning.
+Only future trip planning is allowed.
+If user provide the future date which has so much gap(more than 3 months) from the current date, ask the user to clarify the full date.
+
 
 ## 1. STATE MANAGEMENT
 
@@ -564,10 +569,12 @@ After update_trip completes:
 
 research_destination: Call when destination research is missing or stale and destination is known.
 
-get_weather: Call when weather is required or stale and destination plus dates or month are known.
+get_weather: Call weather tool only when destination and dates are confirmed or month are known.
 
-search_flights: Call when flights are required or stale and origin, destination, and dates are known. 
+search_flights: Call when flights are required or stale and origin, destination, and dates are known.
 If Saved flights are already listed, do not search again unless explicitly requested.
+If the tool says no flights were found and lists other airports, ask the user which one to use. Do not call search_flights again until they choose.
+Even after searching with multiple airports, if the tool says no flights were found, ask the user which airport to use. Do not call search_flights again until they choose.
 
 search_stays:
 Call when stays are required or stale and destination and dates are known.
@@ -659,6 +666,7 @@ Never describe unfinished work as completed.
 - User instructions override default assumptions.
 - Never invent trip details.
 - Prioritize correctness, speed, and user experience.
+- Answer in friendly and engaging tone, based on the query maintain the maximum length of the response.
 """.strip()
 
 

@@ -46,12 +46,14 @@ def _merge_search_fields(brief, **fields: str | None):
 _IATA = re.compile(r"^[A-Z]{3}$")
 
 _AIRPORT_EXTRACT_SYSTEM = (
-    "Extract the airport list from the web search result. "
-    "Use IATA codes only (for example BOM, GOI, DEL). "
-    "departure_airport_code and departure_airport_name are the main airport for the origin city. "
-    "arrival_airport_code and arrival_airport_name are the main airport for the destination city. "
-    "Put every other airport from the search in other_airports, each with name, code, and location. "
-    "Leave a code empty when the search result does not name one. Return JSON only."
+    "Split the airports in the web search result by the city they serve. "
+    "Use IATA codes only (for example BOM, SDW, GOX). "
+    "origin_airports are airports for the origin city. Put the main one first, then alternatives "
+    "that also serve that same city. "
+    "destination_airports are airports for reaching the destination city. Put the closest main "
+    "airport first, then alternatives used to reach that destination. "
+    "An airport that serves the origin must not appear in destination_airports. "
+    "Each item needs name, code, and location. Leave code empty when the result has no IATA code."
 )
 
 
@@ -98,7 +100,7 @@ def _serp_evidence(raw: dict) -> str:
     return clean_text(str(raw))[:12000]
 
 
-def _airport_entry(item: dict) -> dict | None:
+def _airport_entry(item: dict, *, side: str) -> dict | None:
     code = (item.get("code") or "").strip().upper()
     if not _valid_iata(code):
         return None
@@ -106,8 +108,22 @@ def _airport_entry(item: dict) -> dict | None:
         "name": item.get("name") or "",
         "code": code,
         "location": item.get("location") or "",
-        "kind": "nearby",
+        "kind": "primary" if side.endswith("primary") else "nearby",
+        "side": "origin" if side.startswith("origin") else "destination",
     }
+
+
+def _airport_choices(items: list, *, side: str) -> list[dict]:
+    choices: list[dict] = []
+    seen: set[str] = set()
+    for index, item in enumerate(items or []):
+        if not isinstance(item, dict):
+            continue
+        entry = _airport_entry(item, side=f"{side}-primary" if index == 0 else side)
+        if entry and entry["code"] not in seen:
+            seen.add(entry["code"])
+            choices.append(entry)
+    return choices
 
 
 def _extract_airports_from_serp(origin: str, destination: str) -> tuple[str, str, list[dict]]:
@@ -155,26 +171,20 @@ def _extract_airports_from_serp(origin: str, destination: str) -> tuple[str, str
         )
         return "", "", []
 
-    dep = (data.get("departure_airport_code") or "").strip().upper()
-    arr = (data.get("arrival_airport_code") or "").strip().upper()
-    if not _valid_iata(dep):
-        dep = ""
-    if not _valid_iata(arr):
-        arr = ""
-    nearby: list[dict] = []
-    seen = {code for code in (dep, arr) if code}
-    for item in data.get("other_airports") or []:
-        if not isinstance(item, dict):
-            continue
-        entry = _airport_entry(item)
-        if entry and entry["code"] not in seen:
-            seen.add(entry["code"])
-            nearby.append(entry)
+    origin = _airport_choices(data.get("origin_airports") or [], side="origin")
+    destination = _airport_choices(data.get("destination_airports") or [], side="destination")
+    # A code cannot be both the arrival airport and an origin-city airport.
+    origin_codes = {entry["code"] for entry in origin}
+    destination = [entry for entry in destination if entry["code"] not in origin_codes]
+    dep = origin[0]["code"] if origin else ""
+    arr = destination[0]["code"] if destination else ""
+    nearby = origin[1:] + destination[1:]
     logger.info(
-        "airport list | dep=%r arr=%r nearby=%s",
+        "airport list | dep=%r arr=%r origin_alts=%s destination_alts=%s",
         dep,
         arr,
-        [entry["code"] for entry in nearby],
+        [entry["code"] for entry in origin[1:]],
+        [entry["code"] for entry in destination[1:]],
     )
     return dep, arr, nearby
 
@@ -243,32 +253,17 @@ def _nearby_airport_entries(nearby: list[dict], *, exclude: set[str] | None = No
                 "code": code,
                 "location": ap.get("location") or "",
                 "kind": ap.get("kind") or "nearby",
+                "side": ap.get("side") or "destination",
             }
         )
     return out
 
 
-def _build_flight_candidates(
-    dep: str,
-    arr: str,
-    nearby: list[dict],
-    *,
-    user_locked: bool,
-) -> list[tuple[str, str]]:
-    """Ordered routes to try. User-specified pair is exclusive; otherwise try nearby alts."""
-    candidates: list[tuple[str, str]] = []
+def _build_flight_candidates(dep: str, arr: str) -> list[tuple[str, str]]:
+    """Search only the main airport pair. Nearby airports wait for the user to pick one."""
     if _valid_iata(dep) and _valid_iata(arr):
-        candidates.append((dep, arr))
-    if user_locked:
-        return candidates
-
-    for ap in _nearby_airport_entries(nearby, exclude={dep, arr}):
-        code = ap["code"]
-        # Prefer alternate arrival airports near the destination.
-        route = (dep, code)
-        if _valid_iata(dep) and route not in candidates:
-            candidates.append(route)
-    return candidates[:5]
+        return [(dep, arr)]
+    return []
 
 
 def _flight_ask_user_summary(
@@ -280,37 +275,38 @@ def _flight_ask_user_summary(
     tried: list[tuple[str, str]],
     nearby: list[dict],
 ) -> str:
-    nearby_entries = _nearby_airport_entries(
-        nearby,
-        exclude={primary[0], primary[1]} if primary else set(),
-    )
-    tried_txt = ", ".join(f"{a}→{b}" for a, b in tried) or "none"
+    exclude = {primary[0], primary[1]} if primary else set()
+    nearby_entries = _nearby_airport_entries(nearby, exclude=exclude)
     if reason == "no_airport":
         lines = [
             f"I could not identify airports for {origin} → {destination}.",
             "Please share a nearby city with an airport, or specific IATA codes "
             "(e.g. departure BOM, arrival GOI or GOX).",
         ]
+        return " ".join(lines)
+
+    primary_txt = f"{primary[0]} → {primary[1]}" if primary else f"{origin} → {destination}"
+    lines = [f"No flights found for {primary_txt}."]
+    departures = [a for a in nearby_entries if a.get("side") == "origin"]
+    arrivals = [a for a in nearby_entries if a.get("side") != "origin"]
+
+    def _labels(entries: list[dict]) -> str:
+        return ", ".join(
+            f"{a['code']}" + (f" ({a['name']})" if a.get("name") else "")
+            for a in entries[:5]
+        )
+
+    if departures or arrivals:
+        lines.append("Other airports you can choose:")
+        if departures:
+            lines.append(f"departure { _labels(departures) }.")
+        if arrivals:
+            lines.append(f"arrival { _labels(arrivals) }.")
+        lines.append("Tell me which airport to use and I will search that pair. I have not searched these yet.")
     else:
-        primary_txt = f"{primary[0]}→{primary[1]}" if primary else "the primary airports"
-        lines = [
-            f"No flights found for {origin} → {destination} "
-            f"(tried {tried_txt}; primary {primary_txt}).",
-        ]
-        if nearby_entries:
-            labels = ", ".join(
-                f"{a['code']}" + (f" ({a['name']})" if a.get("name") else "")
-                for a in nearby_entries[:5]
-            )
-            lines.append(
-                f"Other airports nearby: {labels}. "
-                "Tell me which airport to use and I will search again."
-            )
-        else:
-            lines.append(
-                "Please suggest an alternative destination city or specific airport "
-                "IATA codes, and I will search flights for that option."
-            )
+        lines.append(
+            "Tell me another city or the IATA codes to use, and I will search that pair."
+        )
     return " ".join(lines)
 
 
@@ -328,7 +324,7 @@ def _flight_alternatives_payload(
         labels = ", ".join(
             f"{a.get('name') or a['code']} ({a['code']})" for a in nearby_entries[:4]
         )
-        suggestions.append(f"Try a nearby airport: {labels}.")
+        suggestions.append(f"Ask the user to pick one before searching again: {labels}.")
     suggestions.append(
         f"Pick a different destination city near {destination} that has flight service."
     )
@@ -379,13 +375,10 @@ def _search_flights(call: dict[str, Any], state: AgentState) -> AgentResult:
         dep = arg_dep
     if arg_arr:
         arr = arg_arr
-    user_locked = bool(arg_dep and arg_arr)
-
-    candidates = _build_flight_candidates(dep, arr, nearby, user_locked=user_locked)
+    candidates = _build_flight_candidates(dep, arr)
     primary = (dep, arr) if _valid_iata(dep) and _valid_iata(arr) else None
     logger.info(
-        "flight candidates | user_locked=%s primary=%s routes=%s nearby=%s",
-        user_locked,
+        "flight candidates | primary=%s routes=%s nearby=%s",
         primary,
         candidates,
         [a.get("code") for a in nearby[:5] if isinstance(a, dict)],

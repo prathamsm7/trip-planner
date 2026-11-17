@@ -7,9 +7,8 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 Budget = Literal["low", "medium", "high"]
-TravelStyle = Literal["solo", "couple", "family", "friends", "business"]
+TravelStyle = Literal["solo", "couple", "family", "friends", "business"] 
 TransportMode = Literal["flight", "train", "bus", "car"]
-StayType = Literal["hotel", "guesthouse", "airbnb", "homestay"]
 
 BRIEF_FIELDS = (
     "origin",
@@ -31,7 +30,7 @@ DEFAULTS: dict = {
     "travellers": 1,
     "budget": "medium",
     "style": "solo",
-    "transport_mode": "flight",
+    "transport_mode": "",
     "stay_type": "hotel",
 }
 
@@ -46,8 +45,8 @@ class TripBrief(BaseModel):
     travellers: int = 1
     budget: Budget = "medium"
     style: TravelStyle = "solo"
-    transport_mode: TransportMode = "flight"
-    stay_type: StayType = "hotel"
+    transport_mode: TransportMode = ""
+    stay_type: str = ""
     preferences: list[str] = Field(default_factory=list)
     notes: str = ""
     # Fields the user explicitly provided (not filled from defaults).
@@ -117,7 +116,7 @@ class TripUpdate(BaseModel):
     budget: Budget | None = None
     style: TravelStyle | None = None
     transport_mode: TransportMode | None = None
-    stay_type: StayType | None = None
+    stay_type: str | None = None
     preferences: list[str] | None = None
     notes: str | None = None
 

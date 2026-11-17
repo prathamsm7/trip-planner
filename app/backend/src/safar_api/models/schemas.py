@@ -2,16 +2,26 @@ from pydantic import BaseModel, Field
 
 
 class LocationDetails(BaseModel):
-    name: str
-    code: str
-    location: str
+    name: str = ""
+    code: str = ""
+    location: str = ""
 
 
 class FlightSearchOutput(BaseModel):
-    """Airports extracted by the small model from a SerpAPI airport search."""
+    """Airports from a SerpAPI search, split by the city they serve."""
 
-    departure_airport_code: str
-    arrival_airport_code: str
-    departure_airport_name: str
-    arrival_airport_name: str
-    other_airports: list[LocationDetails] = Field(default_factory=list)
+    origin_airports: list[LocationDetails] = Field(
+        default_factory=list,
+        description=(
+            "Airports that serve the origin city. "
+            "The first item is the main airport. Later items are alternatives for that same city."
+        ),
+    )
+    destination_airports: list[LocationDetails] = Field(
+        default_factory=list,
+        description=(
+            "Airports that serve the destination city, closest first. "
+            "The first item is the main airport. "
+            "Do not include airports that only serve the origin city."
+        ),
+    )
