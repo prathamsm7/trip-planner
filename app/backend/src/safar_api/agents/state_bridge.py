@@ -39,6 +39,7 @@ def agent_state_from_runtime(state: dict[str, Any]) -> AgentState:
         research=artifact_from_state(state.get("research")),
         weather=artifact_from_state(state.get("weather")),
         flights=artifact_from_state(state.get("flights")),
+        trains=artifact_from_state(state.get("trains")),
         stays=artifact_from_state(state.get("stays")),
         itinerary=artifact_from_state(state.get("itinerary")),
         selections=state.get("selections") or {},
@@ -54,7 +55,7 @@ def dump_artifact(artifact: Artifact | None) -> dict | None:
 def updates_from_agent_result(result_updates: dict[str, Any]) -> dict[str, Any]:
     """Map run_* updates (Artifact objects) onto TripAgentState dict fields."""
     out: dict[str, Any] = {}
-    for key in ("research", "weather", "flights", "stays", "itinerary"):
+    for key in ("research", "weather", "flights", "trains", "stays", "itinerary"):
         if key in result_updates:
             out[key] = dump_artifact(result_updates[key])
     if "brief" in result_updates:

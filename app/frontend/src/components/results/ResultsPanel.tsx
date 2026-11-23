@@ -6,12 +6,14 @@ import type {
   Itinerary,
   Selections,
   TabId,
+  TrainsData,
   WeatherOutlook,
 } from "@/lib/types";
 import { FlightsTab } from "./FlightsTab";
 import { HotelsTab } from "./HotelsTab";
 import { ItineraryTab } from "./ItineraryTab";
 import { PackageTab } from "./PackageTab";
+import { TrainsTab } from "./TrainsTab";
 
 interface Props {
   activeTab: TabId;
@@ -23,9 +25,13 @@ interface Props {
   weather?: WeatherOutlook;
   destinationAbout: string;
   flights?: FlightsData;
+  trains?: TrainsData | null;
   hotels: HotelProperty[] | null;
   selections: Selections;
   onSelections: (s: Selections) => void;
+  awaitingPlanUpdate?: boolean;
+  onConfirmPlanUpdate?: () => void;
+  onKeepPlan?: () => void;
 }
 
 export function ResultsPanel({
@@ -38,20 +44,23 @@ export function ResultsPanel({
   weather,
   destinationAbout,
   flights,
+  trains,
   hotels,
   selections,
   onSelections,
+  awaitingPlanUpdate,
+  onConfirmPlanUpdate,
+  onKeepPlan,
 }: Props) {
   const dest = (structured?.destinationLocation as string) ?? "Destination";
   const source = (structured?.sourceLocation as string) ?? "";
   const dr = structured?.date_range as { start?: string; end?: string } | undefined;
-  const routeLabel = source && dest ? `${source} → ${dest}` : "Flights";
-
   const tabs: { id: TabId; label: string }[] = [
-    { id: "itinerary", label: `${dest} Itinerary` },
-    { id: "flights", label: routeLabel },
+    { id: "itinerary", label: "Itinerary" },
+    { id: "flights", label: "Flight" },
+    { id: "trains", label: "Train" },
     { id: "hotels", label: "Hotels" },
-    { id: "package", label: "Package" },
+    { id: "package", label: "Packages" },
   ];
 
   const hasFlightOptions =
@@ -59,7 +68,8 @@ export function ResultsPanel({
     (flights?.outbound?.other_flights?.length ?? 0) > 0 ||
     (flights?.return_flights?.best_flights?.length ?? 0) > 0 ||
     (flights?.return_flights?.other_flights?.length ?? 0) > 0;
-  const hasContent = itinerary || hasFlightOptions || (hotels && hotels.length);
+  const hasTrains = (trains?.outbound?.length ?? 0) > 0 || (trains?.return?.length ?? 0) > 0 || Boolean(trains?.origin_station);
+  const hasContent = Boolean(dest && dest !== "Destination") || itinerary || hasFlightOptions || hasTrains || (hotels && hotels.length);
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
@@ -91,6 +101,29 @@ export function ResultsPanel({
             ))}
           </div>
           <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-6">
+            {awaitingPlanUpdate && itinerary && (
+              <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 p-4">
+                <p className="text-sm text-gray-800">
+                  Update the day plan around your selected flights, trains, and hotels?
+                </p>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={onConfirmPlanUpdate}
+                    className="rounded-md bg-safar-navy px-3 py-1.5 text-sm text-white"
+                  >
+                    Update plan
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onKeepPlan}
+                    className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-700"
+                  >
+                    Keep this plan
+                  </button>
+                </div>
+              </div>
+            )}
             {activeTab === "itinerary" && (
               <ItineraryTab
                 subTab={itinerarySubTab}
@@ -110,6 +143,15 @@ export function ResultsPanel({
                 onSelections={onSelections}
               />
             )}
+            {activeTab === "trains" && (
+              <TrainsTab
+                trains={trains}
+                source={source}
+                dest={dest}
+                selections={selections}
+                onSelections={onSelections}
+              />
+            )}
             {activeTab === "hotels" && (
               <HotelsTab hotels={hotels} selections={selections} onSelections={onSelections} />
             )}
@@ -117,6 +159,7 @@ export function ResultsPanel({
               <PackageTab
                 itinerary={itinerary}
                 flights={flights}
+                trains={trains}
                 hotels={hotels}
                 selections={selections}
                 structured={structured}

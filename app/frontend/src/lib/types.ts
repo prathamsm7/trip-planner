@@ -1,4 +1,4 @@
-export type TabId = "itinerary" | "flights" | "hotels" | "package";
+export type TabId = "itinerary" | "flights" | "trains" | "hotels" | "package";
 
 export interface ChatMessage {
   id: string;
@@ -24,6 +24,7 @@ export interface TripSnapshot {
   itinerary?: Itinerary | null;
   hotel_search_results?: HotelProperty[];
   flights_data?: FlightsData;
+  trains?: TrainsData | null;
   selections?: Selections;
   messages?: { role: string; content: string }[];
 }
@@ -56,6 +57,66 @@ export interface FlightLegBundle {
   best_flights?: FlightOption[];
   other_flights?: FlightOption[];
   shortlist?: unknown[];
+}
+
+export interface TrainClass {
+  code: string;
+  label: string;
+}
+
+export interface TrainAvailability {
+  class_code: string;
+  class_label?: string;
+  status?: string;
+  text?: string;
+  fare?: number | null;
+}
+
+export interface TrainOption {
+  train_number: string;
+  train_name: string;
+  train_type?: string;
+  train_type_label?: string;
+  from_station_code?: string;
+  from_station_name?: string;
+  to_station_code?: string;
+  to_station_name?: string;
+  departure_time?: string;
+  arrival_time?: string;
+  duration_minutes?: number | null;
+  classes?: TrainClass[];
+  availability?: TrainAvailability[];
+}
+
+export interface TrainStation {
+  code: string;
+  name: string;
+  city?: string;
+  state?: string;
+  kind?: "primary" | "fallback";
+  side?: "origin" | "destination";
+  is_major?: boolean;
+}
+
+export interface TrainsData {
+  searched?: boolean;
+  origin_station?: TrainStation;
+  destination_station?: TrainStation;
+  station_meta?: {
+    origin?: TrainStation;
+    destination?: TrainStation;
+    origin_fallbacks?: TrainStation[];
+    destination_fallbacks?: TrainStation[];
+  };
+  alternatives?: {
+    primary_route?: { from?: string; from_name?: string; to?: string; to_name?: string };
+    fallback_stations?: TrainStation[];
+    ask_user?: boolean;
+  };
+  outbound_date?: string;
+  return_date?: string;
+  outbound?: TrainOption[];
+  return?: TrainOption[];
 }
 
 export interface FlightsData {
@@ -98,6 +159,8 @@ export interface HotelProperty {
 export interface Selections {
   outboundFlightIndex?: number | null;
   returnFlightIndex?: number | null;
+  outboundTrainIndex?: number | null;
+  returnTrainIndex?: number | null;
   hotelIndices?: number[];
 }
 

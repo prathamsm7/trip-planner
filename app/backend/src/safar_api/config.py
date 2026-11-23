@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     serpapi_api_key: str = ""
     tavily_api_key: str = ""
+    railcore_api_key: str = ""
     # planning_llm: itinerary, research, web answers, trip Q&A
     openai_secondary_model: str = "gpt-5.4-mini-2026-03-17"
     # utility_llm: weather extraction, airport extraction, chat summarization
@@ -35,6 +36,8 @@ class Settings(BaseSettings):
     agent_clear_tools_trigger_tokens: int = 12000
     agent_clear_tools_keep: int = 3
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    checkpoint_postgres_url: str = ""
+    database_url: str = ""  # For production platforms like Railway
     langsmith_api_key: str = ""
     langsmith_project: str = "trip planner"
     langsmith_tracing: bool = False

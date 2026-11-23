@@ -8,13 +8,14 @@ from pydantic import BaseModel, Field
 
 from safar_api.trip.brief import TripBrief
 
-Capability = Literal["research", "weather", "flights", "stays", "itinerary"]
+Capability = Literal["research", "weather", "flights", "trains", "stays", "itinerary"]
 
 # Fields that must be present before a capability can run.
 REQUIREMENTS: dict[Capability, tuple[str, ...]] = {
     "research": ("destination",),
     "weather": ("destination",),  # plus dates OR month — checked in missing_fields
     "flights": ("origin", "destination", "start_date", "end_date"),
+    "trains": ("origin", "destination", "start_date"),
     "stays": ("destination", "start_date", "end_date"),
     "itinerary": ("destination",),  # plus trip length — checked in missing_fields
 }
@@ -24,6 +25,7 @@ FINGERPRINT_FIELDS: dict[Capability, tuple[str, ...]] = {
     "research": ("destination", "origin", "transport_mode", "month", "style"),
     "weather": ("destination", "start_date", "end_date", "month"),
     "flights": ("origin", "destination", "start_date", "end_date", "travellers"),
+    "trains": ("origin", "destination", "start_date", "end_date"),
     "stays": ("destination", "start_date", "end_date", "travellers", "stay_type", "budget"),
     "itinerary": (
         "destination",
@@ -41,7 +43,8 @@ FINGERPRINT_FIELDS: dict[Capability, tuple[str, ...]] = {
 CLEAR_ON: dict[Capability, frozenset[str]] = {
     "research": frozenset({"destination", "origin", "transport_mode"}),
     "weather": frozenset({"destination", "start_date", "end_date", "month"}),
-    "flights": frozenset({"origin", "destination", "start_date", "end_date", "travellers"}),
+    "flights": frozenset({"origin", "destination", "travellers"}),
+    "trains": frozenset({"origin", "destination"}),
     "stays": frozenset(
         {"destination", "start_date", "end_date", "travellers", "stay_type"}
     ),
@@ -53,6 +56,7 @@ FLAG_ON: dict[Capability, frozenset[str]] = {
     "research": frozenset({"month", "style"}),
     "weather": frozenset(),
     "flights": frozenset(),
+    "trains": frozenset(),
     "stays": frozenset({"budget"}),
     "itinerary": frozenset({"budget", "style", "travellers", "preferences"}),
 }
@@ -190,6 +194,19 @@ def missing_fields(capability: Capability, brief: TripBrief) -> list[str]:
     return missing
 
 
+# A date change drops only that direction. The other direction stays.
+_LEG_ON_DATE: dict[str, dict[str, str]] = {
+    "flights": {"start_date": "outbound", "end_date": "return_flights"},
+    "trains": {"start_date": "outbound", "end_date": "return"},
+}
+
+
+def _empty_leg(kind: str) -> dict | list:
+    if kind == "flights":
+        return {"best_flights": [], "other_flights": [], "shortlist": []}
+    return []
+
+
 def apply_brief_change(
     changed: set[str],
     artifacts: dict[str, Artifact | None],
@@ -207,6 +224,17 @@ def apply_brief_change(
             continue
         if changed & CLEAR_ON[cap]:  # type: ignore[index]
             out[kind] = None
+            continue
+        leg_fields = _LEG_ON_DATE.get(cap, {})
+        if changed & set(leg_fields):
+            data = dict(artifact.data)
+            for field, leg_key in leg_fields.items():
+                if field not in changed:
+                    continue
+                data[leg_key] = _empty_leg(cap)
+                if cap == "trains":
+                    data["outbound_date" if leg_key == "outbound" else "return_date"] = ""
+            out[kind] = artifact.model_copy(update={"data": data})
         elif changed & FLAG_ON[cap]:  # type: ignore[index]
             out[kind] = artifact.model_copy(update={"flagged": True})
     return out

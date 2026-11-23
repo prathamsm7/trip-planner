@@ -1,5 +1,6 @@
 "use client";
 
+import { cappedHotelIndices, HOTEL_SELECTION_CAP } from "@/lib/selectionCaps";
 import type { HotelProperty, Selections } from "@/lib/types";
 
 interface Props {
@@ -47,10 +48,14 @@ export function HotelsTab({ hotels, selections, onSelections }: Props) {
 
   return (
     <div>
-      <p className="text-sm text-gray-600 mb-4">Showing {hotels.length} hotels</p>
+      <p className="text-sm text-gray-600 mb-4">
+        Showing {hotels.length} hotels. Add up to {HOTEL_SELECTION_CAP}.
+      </p>
       <div className="grid gap-4 sm:grid-cols-2">
         {hotels.map((hotel, index) => {
-          const selected = selections.hotelIndices?.includes(index);
+          const hotelIndices = cappedHotelIndices(selections.hotelIndices);
+          const selected = hotelIndices.includes(index);
+          const atCap = hotelIndices.length >= HOTEL_SELECTION_CAP;
           const price =
             hotel.rate_per_night?.extracted_lowest ??
             hotel.rate_per_night?.lowest;
@@ -95,21 +100,28 @@ export function HotelsTab({ hotels, selections, onSelections }: Props) {
                   <button
                     type="button"
                     onClick={() => {
-                      const indices = new Set(selections.hotelIndices ?? []);
-                      if (selected) indices.delete(index);
-                      else indices.add(index);
+                      const indices = cappedHotelIndices(selections.hotelIndices);
+                      if (selected) {
+                        onSelections({
+                          ...selections,
+                          hotelIndices: indices.filter((item) => item !== index),
+                        });
+                        return;
+                      }
+                      if (indices.length >= HOTEL_SELECTION_CAP) return;
                       onSelections({
                         ...selections,
-                        hotelIndices: Array.from(indices),
+                        hotelIndices: [...indices, index],
                       });
                     }}
+                    disabled={!selected && atCap}
                     className={`flex-1 py-2 rounded text-sm font-medium border ${
                       selected
                         ? "bg-safar-navy text-white border-safar-navy"
-                        : "border-gray-300 hover:bg-gray-50"
+                        : "border-gray-300 hover:bg-gray-50 disabled:opacity-40"
                     }`}
                   >
-                    {selected ? "Added" : "Add to Trip"}
+                    {selected ? "Added" : atCap ? "Limit reached" : "Add to Trip"}
                   </button>
                   <button
                     type="button"

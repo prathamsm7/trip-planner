@@ -23,9 +23,11 @@ class TripAgentState(AgentState):
     research: NotRequired[Annotated[dict | None, replace_dict]]
     weather: NotRequired[Annotated[dict | None, replace_dict]]
     flights: NotRequired[Annotated[dict | None, replace_dict]]
+    trains: NotRequired[Annotated[dict | None, replace_dict]]
     stays: NotRequired[Annotated[dict | None, replace_dict]]
     itinerary: NotRequired[Annotated[dict | None, replace_dict]]
     selections: NotRequired[Annotated[dict, merge_selections]]
+    chat: NotRequired[Annotated[list, keep_latest]]
     last_step_detail: NotRequired[Annotated[str, merge_step_detail]]
     remaining_steps: NotRequired[Annotated[int, keep_latest]]
 
@@ -37,6 +39,7 @@ def empty_trip_fields() -> dict[str, Any]:
         "research": None,
         "weather": None,
         "flights": None,
+        "trains": None,
         "stays": None,
         "itinerary": None,
         "selections": {},

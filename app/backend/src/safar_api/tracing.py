@@ -53,7 +53,7 @@ def langsmith_run_config(
     extra_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Graph invoke/stream config with LangSmith tags + session metadata."""
-    metadata: dict[str, Any] = {"thread_id": thread_id}
+    metadata: dict[str, Any] = {"thread_id": thread_id, "session_id": thread_id}
     if extra_metadata:
         metadata.update(extra_metadata)
 

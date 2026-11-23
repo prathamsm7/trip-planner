@@ -15,12 +15,11 @@ from safar_api.services.llm import utility_llm
 from safar_api.services.serpapi_client import (
     search_ai_overview,
     search_hotels,
-    search_round_trip_flights,
+    search_one_way_flights,
 )
 from safar_api.services.text import clean_text
 from safar_api.trip.results import (
     FlightLegBundle,
-    FlightShortlistItem,
     FlightsResult,
     StayShortlistItem,
     StaysResult,
@@ -204,38 +203,6 @@ def _resolve_airports(state: AgentState, args: dict) -> tuple[str, str, list[dic
     return dep or found_dep, arr or found_arr, nearby
 
 
-def _flight_shortlist(best: list[dict], other: list[dict]) -> list[FlightShortlistItem]:
-    all_flights = list(best) + list(other)
-    items: list[FlightShortlistItem] = []
-    if not all_flights:
-        return items
-    # Cheapest
-    priced = [(i, f) for i, f in enumerate(all_flights) if f.get("price") is not None]
-    if priced:
-        i, f = min(priced, key=lambda x: x[1].get("price") or 1e18)
-        items.append(
-            FlightShortlistItem(
-                label="cheapest",
-                price=float(f.get("price")),
-                reason="Lowest price",
-                index=i,
-            )
-        )
-    # Fastest
-    timed = [(i, f) for i, f in enumerate(all_flights) if f.get("total_duration") is not None]
-    if timed:
-        i, f = min(timed, key=lambda x: x[1].get("total_duration") or 1e18)
-        items.append(
-            FlightShortlistItem(
-                label="fastest",
-                price=float(f["price"]) if f.get("price") is not None else None,
-                reason="Shortest duration",
-                index=i,
-            )
-        )
-    return items[:3]
-
-
 def _nearby_airport_entries(nearby: list[dict], *, exclude: set[str] | None = None) -> list[dict]:
     exclude = exclude or set()
     out: list[dict] = []
@@ -259,101 +226,103 @@ def _nearby_airport_entries(nearby: list[dict], *, exclude: set[str] | None = No
     return out
 
 
-def _build_flight_candidates(dep: str, arr: str) -> list[tuple[str, str]]:
-    """Search only the main airport pair. Nearby airports wait for the user to pick one."""
-    if _valid_iata(dep) and _valid_iata(arr):
-        return [(dep, arr)]
-    return []
-
-
-def _flight_ask_user_summary(
-    *,
-    origin: str,
-    destination: str,
-    reason: str,
-    primary: tuple[str, str] | None,
-    tried: list[tuple[str, str]],
-    nearby: list[dict],
-) -> str:
-    exclude = {primary[0], primary[1]} if primary else set()
-    nearby_entries = _nearby_airport_entries(nearby, exclude=exclude)
-    if reason == "no_airport":
-        lines = [
-            f"I could not identify airports for {origin} → {destination}.",
-            "Please share a nearby city with an airport, or specific IATA codes "
-            "(e.g. departure BOM, arrival GOI or GOX).",
-        ]
-        return " ".join(lines)
-
-    primary_txt = f"{primary[0]} → {primary[1]}" if primary else f"{origin} → {destination}"
-    lines = [f"No flights found for {primary_txt}."]
-    departures = [a for a in nearby_entries if a.get("side") == "origin"]
-    arrivals = [a for a in nearby_entries if a.get("side") != "origin"]
-
-    def _labels(entries: list[dict]) -> str:
-        return ", ".join(
-            f"{a['code']}" + (f" ({a['name']})" if a.get("name") else "")
-            for a in entries[:5]
-        )
-
-    if departures or arrivals:
-        lines.append("Other airports you can choose:")
-        if departures:
-            lines.append(f"departure { _labels(departures) }.")
-        if arrivals:
-            lines.append(f"arrival { _labels(arrivals) }.")
-        lines.append("Tell me which airport to use and I will search that pair. I have not searched these yet.")
-    else:
-        lines.append(
-            "Tell me another city or the IATA codes to use, and I will search that pair."
-        )
-    return " ".join(lines)
-
-
-def _flight_alternatives_payload(
-    nearby: list[dict],
-    *,
-    tried: list[tuple[str, str]],
-    primary: tuple[str, str] | None,
-    reason: str,
-    destination: str,
-) -> dict[str, Any]:
-    nearby_entries = _nearby_airport_entries(nearby)
-    suggestions: list[str] = []
-    if nearby_entries:
-        labels = ", ".join(
-            f"{a.get('name') or a['code']} ({a['code']})" for a in nearby_entries[:4]
-        )
-        suggestions.append(f"Ask the user to pick one before searching again: {labels}.")
-    suggestions.append(
-        f"Pick a different destination city near {destination} that has flight service."
+def _airport_labels(entries: list[dict]) -> str:
+    return ", ".join(
+        f"{entry['code']}" + (f" ({entry['name']})" if entry.get("name") else "")
+        for entry in entries[:5]
     )
-    suggestions.append("Or share exact IATA codes for departure and arrival airports.")
-    return {
-        "nearby_airports": nearby_entries,
-        "tried_routes": [{"dep": a, "arr": b} for a, b in tried],
-        "primary_route": (
-            {"dep": primary[0], "arr": primary[1]} if primary else None
+
+
+def _ask_for_another_airport(origin: str, destination: str, dep: str, arr: str, nearby: list[dict]) -> tuple[str, dict]:
+    """Tell the user this pair has no flights and list other airports they can choose."""
+    others = _nearby_airport_entries(nearby, exclude={code for code in (dep, arr) if code})
+    if _valid_iata(dep) and _valid_iata(arr):
+        summary = f"No flights found for {dep} → {arr}."
+    else:
+        summary = f"I could not identify airports for {origin} → {destination}."
+    if others:
+        summary += f" Other airports: {_airport_labels(others)}. Tell me which one to search."
+    else:
+        summary += " Tell me another city or the IATA codes to search."
+    return summary, {"nearby_airports": others, "suggestions": [summary], "ask_user": True}
+
+
+def _flight_leg_has_results(bundle: Any) -> bool:
+    if not isinstance(bundle, dict):
+        return False
+    return bool(bundle.get("best_flights") or bundle.get("other_flights"))
+
+
+def _flights_not_found(
+    state: AgentState,
+    brief,
+    dep: str,
+    arr: str,
+    legs: set[str],
+    summary: str,
+    alternatives: dict,
+    error: str,
+    dates_saved: bool = False,
+) -> AgentResult:
+    saved = _keep_unsearched_flight_legs(
+        state,
+        FlightsResult(
+            airport_meta={"departure_airport_code": dep, "arrival_airport_code": arr},
+            alternatives=alternatives,
         ),
-        "reason": reason,
-        "suggestions": suggestions,
-        "ask_user": True,
-    }
+        legs,
+    )
+    return AgentResult(
+        status="failed",
+        summary=summary,
+        detail="Searching flights",
+        error=error,
+        updates={"flights": make_artifact("flights", brief, saved), **({"brief": brief} if dates_saved else {})},
+    )
 
 
-def _search_flights(call: dict[str, Any], state: AgentState) -> AgentResult:
+def _keep_unsearched_flight_legs(state: AgentState, result: FlightsResult, legs: set[str]) -> FlightsResult:
+    """Write only the direction this call searched. Leave the other direction in place."""
+    previous = state.flights.data if state.flights and isinstance(state.flights.data, dict) else {}
+    if "outbound" not in legs and isinstance(previous.get("outbound"), dict):
+        result.outbound = FlightLegBundle.model_validate(previous["outbound"])
+    if "return" not in legs and isinstance(previous.get("return_flights"), dict):
+        result.return_flights = FlightLegBundle.model_validate(previous["return_flights"])
+    return result
+
+
+def find_flights(call: dict[str, Any], state: AgentState) -> AgentResult:
     args = call.get("args") or {}
+    asked_start = (args.get("start_date") or "").strip()
+    asked_end = (args.get("end_date") or "").strip()
+    # The agent passes end_date only for a return. A saved trip end date does not.
+    legs = {"return"} if asked_end else set()
+    if asked_start or not asked_end:
+        legs.add("outbound")
     brief, dates_saved = _merge_search_fields(
         state.brief,
-        start_date=args.get("start_date"),
-        end_date=args.get("end_date"),
+        start_date=asked_start or None,
+        end_date=asked_end or None,
     )
-    start = brief.start_date
-    end = brief.end_date
-    if not (brief.origin and brief.destination and start and end):
+
+    start = asked_start or (brief.start_date or "")
+    end = asked_end
+    if not brief.origin or not brief.destination:
         return AgentResult(
             status="failed",
-            summary="Need origin, destination, and dates for flights.",
+            summary="Need an origin and a destination for flights.",
+            error="missing_fields",
+        )
+    if "outbound" in legs and not start:
+        return AgentResult(
+            status="failed",
+            summary="Need a departure date to search outbound flights.",
+            error="missing_fields",
+        )
+    if "return" in legs and not end:
+        return AgentResult(
+            status="failed",
+            summary="Need a return date to search return flights.",
             error="missing_fields",
         )
 
@@ -367,175 +336,85 @@ def _search_flights(call: dict[str, Any], state: AgentState) -> AgentResult:
         and not args.get("refresh")
         and not user_override
     ):
-        return AgentResult(status="skipped", summary="Flight results already available.")
+        saved = state.flights.data if isinstance(state.flights.data, dict) else {}
+        outbound_ready = "outbound" not in legs or _flight_leg_has_results(saved.get("outbound"))
+        return_ready = "return" not in legs or _flight_leg_has_results(saved.get("return_flights"))
+        if outbound_ready and return_ready:
+            return AgentResult(status="skipped", summary="Flight results already available.")
 
     dep, arr, nearby = _resolve_airports(state, args)
-    # If the user locked one side, keep Serp/research fill for the other side only.
     if arg_dep:
         dep = arg_dep
     if arg_arr:
         arr = arg_arr
-    candidates = _build_flight_candidates(dep, arr)
-    primary = (dep, arr) if _valid_iata(dep) and _valid_iata(arr) else None
-    logger.info(
-        "flight candidates | primary=%s routes=%s nearby=%s",
-        primary,
-        candidates,
-        [a.get("code") for a in nearby[:5] if isinstance(a, dict)],
-    )
+    summary, alternatives = _ask_for_another_airport(brief.origin, brief.destination, dep, arr, nearby)
+    if not (_valid_iata(dep) and _valid_iata(arr)):
+        return _flights_not_found(state, brief, dep, arr, legs, summary, alternatives, "no_airport", dates_saved)
 
-    if not candidates:
-        summary = _flight_ask_user_summary(
-            origin=brief.origin,
-            destination=brief.destination,
-            reason="no_airport",
-            primary=None,
-            tried=[],
-            nearby=nearby,
+    logger.info("flight search | %s→%s (%s)", dep, arr, "+".join(sorted(legs)))
+    outbound_bundle: dict = {}
+    return_bundle: dict = {}
+    airports: list = []
+    try:
+        if "outbound" in legs:
+            outbound_bundle = search_one_way_flights(start, dep, arr, brief.travellers)
+            airports.extend(outbound_bundle.get("airports") or [])
+        if "return" in legs:
+            return_bundle = search_one_way_flights(end, arr, dep, brief.travellers)
+            airports.extend(return_bundle.get("airports") or [])
+    except Exception as exc:
+        log_exception(
+            logger,
+            "flight search failed",
+            exc,
+            context={"dep": dep, "arr": arr, "start": start, "end": end},
         )
-        return AgentResult(
-            status="failed",
-            summary=summary,
-            detail="Searching flights",
-            error="no_airport",
-            updates={
-                "flights": make_artifact(
-                    "flights",
-                    brief,
-                    FlightsResult(
-                        airport_meta={
-                            "departure_airport_code": dep,
-                            "arrival_airport_code": arr,
-                        },
-                        alternatives=_flight_alternatives_payload(
-                            nearby,
-                            tried=[],
-                            primary=None,
-                            reason="no_airport",
-                            destination=brief.destination,
-                        ),
-                    ),
-                )
-            },
+        return _flights_not_found(
+            state,
+            brief,
+            dep,
+            arr,
+            legs,
+            f"Flight search failed for {dep} → {arr}. Tell me another airport to try.",
+            alternatives,
+            type(exc).__name__,
+            dates_saved,
         )
 
-    last_error = ""
-    tried: list[tuple[str, str]] = []
-    for dep_id, arr_id in candidates:
-        tried.append((dep_id, arr_id))
-        try:
-            logger.info("flight search attempt | %s→%s (outbound+return)", dep_id, arr_id)
-            flight_results = search_round_trip_flights(
-                start, end, dep_id, arr_id, brief.travellers
-            )
-            outbound_bundle = flight_results.get("outbound") or {}
-            return_bundle = flight_results.get("return") or {}
-            outbound_best = outbound_bundle.get("best_flights") or []
-            outbound_other = outbound_bundle.get("other_flights") or []
-            return_best = return_bundle.get("best_flights") or []
-            return_other = return_bundle.get("other_flights") or []
-            outbound_shortlist = _flight_shortlist(outbound_best, outbound_other)
-            return_shortlist = _flight_shortlist(return_best, return_other)
-            outbound = FlightLegBundle(
-                best_flights=outbound_best,
-                other_flights=outbound_other,
-                shortlist=outbound_shortlist,
-            )
-            return_flights = FlightLegBundle(
-                best_flights=return_best,
-                other_flights=return_other,
-                shortlist=return_shortlist,
-            )
-            result = FlightsResult(
-                outbound=outbound,
-                return_flights=return_flights,
-                airports=flight_results.get("airports") or [],
-                airport_meta={
-                    "departure_airport_code": dep_id,
-                    "arrival_airport_code": arr_id,
-                },
-                alternatives={
-                    "nearby_airports": _nearby_airport_entries(
-                        nearby, exclude={dep_id, arr_id}
-                    ),
-                    "tried_routes": [{"dep": a, "arr": b} for a, b in tried],
-                },
-            )
-            outbound_count = len(outbound_best) + len(outbound_other)
-            return_count = len(return_best) + len(return_other)
-            # Accept if either leg has options; UI still shows both sections.
-            if outbound_count or return_count:
-                used_alternate = primary is not None and (dep_id, arr_id) != primary
-                artifact = make_artifact("flights", brief, result)
-                note = (
-                    f" Primary {primary[0]}→{primary[1]} had no flights; "
-                    f"showing alternate {dep_id}→{arr_id}."
-                    if used_alternate and primary
-                    else ""
-                )
-                missing = []
-                if not outbound_count:
-                    missing.append("outbound")
-                if not return_count:
-                    missing.append("return")
-                miss_note = (
-                    f" No {(' or '.join(missing))} options found."
-                    if missing
-                    else ""
-                )
-                return AgentResult(
-                    status="ok" if (outbound_count and return_count) else "partial",
-                    summary=(
-                        f"Found {outbound_count} outbound ({dep_id}→{arr_id}) and "
-                        f"{return_count} return ({arr_id}→{dep_id}) flights."
-                        f"{note}{miss_note} "
-                        f"Outbound shortlist: "
-                        f"{', '.join(s.label for s in outbound_shortlist) or 'n/a'}; "
-                        f"return shortlist: "
-                        f"{', '.join(s.label for s in return_shortlist) or 'n/a'}."
-                    ).strip(),
-                    detail=f"Searching flights {dep_id} to {arr_id}",
-                    updates={"flights": artifact, **({"brief": brief} if dates_saved else {})},
-                )
-            last_error = "no_results"
-            logger.info("flight search empty both ways | %s→%s", dep_id, arr_id)
-        except Exception as exc:
-            last_error = type(exc).__name__
-            log_exception(
-                logger,
-                "flight search failed",
-                exc,
-                context={"dep": dep_id, "arr": arr_id, "start": start, "end": end},
-            )
+    def _count(bundle: dict) -> int:
+        return len(bundle.get("best_flights") or []) + len(bundle.get("other_flights") or [])
 
-    summary = _flight_ask_user_summary(
-        origin=brief.origin,
-        destination=brief.destination,
-        reason="no_results",
-        primary=primary,
-        tried=tried,
-        nearby=nearby,
-    )
-    empty = FlightsResult(
-        airport_meta={
-            "departure_airport_code": dep,
-            "arrival_airport_code": arr,
-        },
-        alternatives=_flight_alternatives_payload(
-            nearby,
-            tried=tried,
-            primary=primary,
-            reason=last_error or "no_results",
-            destination=brief.destination,
+    outbound_count = _count(outbound_bundle) if "outbound" in legs else 0
+    return_count = _count(return_bundle) if "return" in legs else 0
+    result = _keep_unsearched_flight_legs(
+        state,
+        FlightsResult(
+            outbound=FlightLegBundle(
+                best_flights=outbound_bundle.get("best_flights") or [],
+                other_flights=outbound_bundle.get("other_flights") or [],
+            ),
+            return_flights=FlightLegBundle(
+                best_flights=return_bundle.get("best_flights") or [],
+                other_flights=return_bundle.get("other_flights") or [],
+            ),
+            airports=airports,
+            airport_meta={"departure_airport_code": dep, "arrival_airport_code": arr},
         ),
+        legs,
     )
-    return AgentResult(
-        status="failed",
-        summary=summary,
-        detail="Searching flights",
-        error=last_error or "no_results",
-        updates={"flights": make_artifact("flights", brief, empty)},
-    )
+    if outbound_count or return_count:
+        parts = []
+        if "outbound" in legs:
+            parts.append(f"{outbound_count} outbound ({dep}→{arr})")
+        if "return" in legs:
+            parts.append(f"{return_count} return ({arr}→{dep})")
+        return AgentResult(
+            status="ok",
+            summary=f"Found {' and '.join(parts)} flights.",
+            detail=f"Searching flights {dep} to {arr}",
+            updates={"flights": make_artifact("flights", brief, result), **({"brief": brief} if dates_saved else {})},
+        )
+    return _flights_not_found(state, brief, dep, arr, legs, summary, alternatives, "no_results", dates_saved)
 
 
 def _stay_shortlist(properties: list[dict]) -> list[StayShortlistItem]:
@@ -579,7 +458,7 @@ def _stay_shortlist(properties: list[dict]) -> list[StayShortlistItem]:
     return items[:3]
 
 
-def _search_stays(call: dict[str, Any], state: AgentState) -> AgentResult:
+def find_stays(call: dict[str, Any], state: AgentState) -> AgentResult:
     args = call.get("args") or {}
     brief, brief_saved = _merge_search_fields(
         state.brief,
@@ -674,11 +553,3 @@ def _search_stays(call: dict[str, Any], state: AgentState) -> AgentResult:
         },
     )
 
-
-def run_booking(call: dict[str, Any], state: AgentState) -> AgentResult:
-    name = call.get("name") or ""
-    if name == "search_flights":
-        return _search_flights(call, state)
-    if name == "search_stays":
-        return _search_stays(call, state)
-    return AgentResult(status="failed", summary=f"Unknown booking tool: {name}", error="unknown_tool")

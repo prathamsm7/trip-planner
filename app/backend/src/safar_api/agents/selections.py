@@ -1,10 +1,22 @@
-"""Resolve UI selections (indices) into concrete flight/hotel details for the agent."""
+"""Resolve UI selections (indices) into concrete flight, train, and hotel details."""
 
 from __future__ import annotations
 
 import re
 from datetime import datetime
 from typing import Any
+
+_HOTEL_CAP = 3
+
+
+def _hotel_indices(raw: Any) -> list[int]:
+    chosen: list[int] = []
+    for index in raw or []:
+        if isinstance(index, int) and index not in chosen:
+            chosen.append(index)
+        if len(chosen) == _HOTEL_CAP:
+            break
+    return chosen
 
 
 def _flight_list(bundle: dict | None) -> list[dict]:
@@ -70,6 +82,50 @@ def _option_lists(state: dict[str, Any]) -> tuple[list[dict], list[dict], list[d
     return outbound, return_list, properties
 
 
+def _train_lists(state: dict[str, Any]) -> tuple[list[dict], list[dict]]:
+    art = state.get("trains")
+    data: dict = {}
+    if isinstance(art, dict):
+        data = art.get("data") or art
+    if not isinstance(data, dict):
+        return [], []
+    outbound = data.get("outbound") if isinstance(data.get("outbound"), list) else []
+    returning = data.get("return") if isinstance(data.get("return"), list) else []
+    return [row for row in outbound if isinstance(row, dict)], [row for row in returning if isinstance(row, dict)]
+
+
+def _train_fare(train: dict) -> tuple[float | None, str]:
+    best: tuple[float, str] | None = None
+    for row in train.get("availability") or []:
+        if not isinstance(row, dict):
+            continue
+        fare = row.get("fare")
+        if not isinstance(fare, (int, float)):
+            continue
+        label = str(row.get("class_label") or row.get("class_code") or "")
+        if best is None or float(fare) < best[0]:
+            best = (float(fare), label)
+    return (best[0], best[1]) if best else (None, "")
+
+
+def _summarize_train(train: dict | None) -> dict[str, Any] | None:
+    if not isinstance(train, dict):
+        return None
+    fare, fare_class = _train_fare(train)
+    return {
+        "train_number": train.get("train_number") or "",
+        "train_name": train.get("train_name") or "",
+        "from_station_code": train.get("from_station_code") or "",
+        "from_station_name": train.get("from_station_name") or "",
+        "to_station_code": train.get("to_station_code") or "",
+        "to_station_name": train.get("to_station_name") or "",
+        "departure_time": train.get("departure_time") or "",
+        "arrival_time": train.get("arrival_time") or "",
+        "fare": fare,
+        "fare_class": fare_class,
+    }
+
+
 def resolve_selections(state: dict[str, Any]) -> dict[str, Any]:
     """Turn selection indices + artifacts into concrete options the LLM can use."""
     selections = state.get("selections") or {}
@@ -77,10 +133,13 @@ def resolve_selections(state: dict[str, Any]) -> dict[str, Any]:
         selections = {}
 
     outbound, return_list, properties = _option_lists(state)
+    outbound_trains, return_trains = _train_lists(state)
 
     out_idx = selections.get("outboundFlightIndex")
     ret_idx = selections.get("returnFlightIndex")
-    hotel_indices = selections.get("hotelIndices") or []
+    out_train_idx = selections.get("outboundTrainIndex")
+    ret_train_idx = selections.get("returnTrainIndex")
+    hotel_indices = _hotel_indices(selections.get("hotelIndices"))
 
     selected_outbound = None
     selected_return = None
@@ -88,6 +147,13 @@ def resolve_selections(state: dict[str, Any]) -> dict[str, Any]:
         selected_outbound = _summarize_flight(outbound[out_idx])
     if isinstance(ret_idx, int) and 0 <= ret_idx < len(return_list):
         selected_return = _summarize_flight(return_list[ret_idx])
+
+    selected_outbound_train = None
+    selected_return_train = None
+    if isinstance(out_train_idx, int) and 0 <= out_train_idx < len(outbound_trains):
+        selected_outbound_train = _summarize_train(outbound_trains[out_train_idx])
+    if isinstance(ret_train_idx, int) and 0 <= ret_train_idx < len(return_trains):
+        selected_return_train = _summarize_train(return_trains[ret_train_idx])
 
     selected_hotels = []
     for idx in hotel_indices:
@@ -100,14 +166,20 @@ def resolve_selections(state: dict[str, Any]) -> dict[str, Any]:
         "indices": {
             "outboundFlightIndex": out_idx,
             "returnFlightIndex": ret_idx,
-            "hotelIndices": list(hotel_indices),
+            "outboundTrainIndex": out_train_idx,
+            "returnTrainIndex": ret_train_idx,
+            "hotelIndices": hotel_indices,
         },
         "outbound_flight": selected_outbound,
         "return_flight": selected_return,
+        "outbound_train": selected_outbound_train,
+        "return_train": selected_return_train,
         "hotels": selected_hotels,
         "available": {
             "outbound_options": len(outbound),
             "return_options": len(return_list),
+            "outbound_trains": len(outbound_trains),
+            "return_trains": len(return_trains),
             "hotel_options": len(properties),
         },
     }
@@ -250,6 +322,41 @@ def _hotel_score(prop: dict, pref: str) -> float:
     return score
 
 
+def _train_score(train: dict, pref: str) -> float:
+    summary = _summarize_train(train) or {}
+    p = (pref or "").lower().strip()
+    if not p:
+        return 0.0
+    score = 0.0
+    number = str(summary.get("train_number") or "").lower()
+    name = str(summary.get("train_name") or "").lower()
+    if number and number in p.replace(" ", ""):
+        score += 80
+    if name and any(tok and tok in name for tok in re.split(r"\W+", p) if len(tok) > 3):
+        score += 50
+    hour = _parse_hour(summary.get("departure_time"))
+    bucket = _time_bucket(hour)
+    wanted = _pref_buckets(p)
+    if wanted:
+        score += 100 if bucket in wanted else -40
+    if "cheap" in p or "lowest" in p or "budget" in p:
+        fare = summary.get("fare")
+        score += max(0, 40 - min(40, _price_value(fare) / 200))
+    score -= min(8, _price_value(summary.get("fare")) / 5000)
+    return score
+
+
+def _pick_train_index(trains: list[dict], pref: str | None) -> int | None:
+    if not trains or not (pref or "").strip():
+        return None
+    scored = [(_train_score(train, pref or ""), i) for i, train in enumerate(trains)]
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    best_score, best_i = scored[0]
+    if best_score < 20:
+        return None
+    return best_i
+
+
 def _pick_hotel_index(properties: list[dict], pref: str | None) -> int | None:
     if not properties or not (pref or "").strip():
         return None
@@ -267,9 +374,13 @@ def apply_selection_preferences(
     outbound_pref: str | None = None,
     return_pref: str | None = None,
     hotel_pref: str | None = None,
+    outbound_train_pref: str | None = None,
+    return_train_pref: str | None = None,
     outbound_index: int | None = None,
     return_index: int | None = None,
     hotel_index: int | None = None,
+    outbound_train_index: int | None = None,
+    return_train_index: int | None = None,
 ) -> tuple[dict[str, Any], str]:
     """
     Update selections from explicit indices and/or natural-language prefs.
@@ -277,6 +388,7 @@ def apply_selection_preferences(
     Returns (merged_selections, observation_text).
     """
     outbound, return_list, properties = _option_lists(state)
+    outbound_trains, return_trains = _train_lists(state)
     current = dict(state.get("selections") or {})
     notes: list[str] = []
 
@@ -321,6 +433,46 @@ def apply_selection_preferences(
                     f"return→ {s.get('airline')} {s.get('flight_number')} "
                     f"{s.get('departure_time')} (#{idx})"
                 )
+
+    if outbound_train_index is not None:
+        if 0 <= outbound_train_index < len(outbound_trains):
+            current["outboundTrainIndex"] = outbound_train_index
+            notes.append(f"outbound train index={outbound_train_index}")
+        else:
+            notes.append(
+                f"outbound train index {outbound_train_index} out of range (0-{len(outbound_trains) - 1})"
+            )
+    elif outbound_train_pref:
+        if not outbound_trains:
+            notes.append("no outbound trains available — search_trains first")
+        else:
+            idx = _pick_train_index(outbound_trains, outbound_train_pref)
+            if idx is None:
+                notes.append(f"no outbound train match for {outbound_train_pref!r}")
+            else:
+                current["outboundTrainIndex"] = idx
+                s = _summarize_train(outbound_trains[idx]) or {}
+                notes.append(f"outbound train→ {s.get('train_number')} {s.get('train_name')} (#{idx})")
+
+    if return_train_index is not None:
+        if 0 <= return_train_index < len(return_trains):
+            current["returnTrainIndex"] = return_train_index
+            notes.append(f"return train index={return_train_index}")
+        else:
+            notes.append(
+                f"return train index {return_train_index} out of range (0-{len(return_trains) - 1})"
+            )
+    elif return_train_pref:
+        if not return_trains:
+            notes.append("no return trains available — search_trains first")
+        else:
+            idx = _pick_train_index(return_trains, return_train_pref)
+            if idx is None:
+                notes.append(f"no return train match for {return_train_pref!r}")
+            else:
+                current["returnTrainIndex"] = idx
+                s = _summarize_train(return_trains[idx]) or {}
+                notes.append(f"return train→ {s.get('train_number')} {s.get('train_name')} (#{idx})")
 
     if hotel_index is not None:
         if 0 <= hotel_index < len(properties):
@@ -380,7 +532,9 @@ def selections_prompt_block(state: dict[str, Any]) -> str:
     avail = resolved["available"]
     lines.append(
         f"  available: outbound={avail['outbound_options']} "
-        f"return={avail['return_options']} hotels={avail['hotel_options']}"
+        f"return={avail['return_options']} "
+        f"outbound_trains={avail['outbound_trains']} return_trains={avail['return_trains']} "
+        f"hotels={avail['hotel_options']}"
     )
     out = resolved.get("outbound_flight")
     if out:
@@ -404,6 +558,28 @@ def selections_prompt_block(state: dict[str, Any]) -> str:
         )
     else:
         lines.append("  SELECTED return: none")
+    out_train = resolved.get("outbound_train")
+    if out_train:
+        lines.append(
+            "  SELECTED outbound train: "
+            f"{out_train.get('train_number')} {out_train.get('train_name')} "
+            f"{out_train.get('from_station_code')} {out_train.get('departure_time')} → "
+            f"{out_train.get('to_station_code')} {out_train.get('arrival_time')} "
+            f"(₹{out_train.get('fare')} {out_train.get('fare_class')})"
+        )
+    else:
+        lines.append("  SELECTED outbound train: none")
+    ret_train = resolved.get("return_train")
+    if ret_train:
+        lines.append(
+            "  SELECTED return train: "
+            f"{ret_train.get('train_number')} {ret_train.get('train_name')} "
+            f"{ret_train.get('from_station_code')} {ret_train.get('departure_time')} → "
+            f"{ret_train.get('to_station_code')} {ret_train.get('arrival_time')} "
+            f"(₹{ret_train.get('fare')} {ret_train.get('fare_class')})"
+        )
+    else:
+        lines.append("  SELECTED return train: none")
     hotels = resolved.get("hotels") or []
     if hotels:
         for h in hotels[:3]:

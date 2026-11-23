@@ -8,10 +8,34 @@ export async function createThread(): Promise<string> {
   return data.thread_id as string;
 }
 
+export interface SavedTripMetadata {
+  thread_id: string;
+  destination: string;
+  origin: string;
+  start_date: string;
+  end_date: string;
+  updated_at: string;
+}
+
+export async function listTrips(): Promise<{ trips: SavedTripMetadata[] }> {
+  const res = await fetch(`${API_URL}/api/trips`);
+  if (!res.ok) {
+    throw new Error(`Trip list failed: ${res.status}`);
+  }
+  return res.json();
+}
+
+export async function deleteTrip(threadId: string): Promise<void> {
+  await fetch(`${API_URL}/api/threads/${threadId}`, { method: "DELETE" });
+}
+
 export async function getThread(threadId: string): Promise<{
   snapshot: TripSnapshot | null;
 }> {
   const res = await fetch(`${API_URL}/api/threads/${threadId}`);
+  if (!res.ok) {
+    throw new Error(`Thread load failed: ${res.status}`);
+  }
   return res.json();
 }
 

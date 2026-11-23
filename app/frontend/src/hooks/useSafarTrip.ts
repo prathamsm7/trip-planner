@@ -6,7 +6,11 @@ import {
   getThread,
   patchSelections,
   streamMessage,
+  listTrips,
+  deleteTrip,
+  type SavedTripMetadata,
 } from "@/lib/api";
+import { capSelections } from "@/lib/selectionCaps";
 import type {
   ChatMessage,
   FlightsData,
@@ -16,11 +20,28 @@ import type {
   StepEvent,
   StreamEvent,
   TabId,
+  TrainsData,
   TripSnapshot,
   WeatherOutlook,
 } from "@/lib/types";
 
 const THREAD_KEY = "safar_thread_id";
+const SUMMARY_PREFIX = "here is a summary of the conversation to date:";
+
+function isConversationMessage(message: { role: string; content: string }) {
+  const content = message.content.trim();
+  if (!content) return false;
+  if (content.toLowerCase().startsWith(SUMMARY_PREFIX)) return false;
+  if (content.toLowerCase().startsWith("current trip (checkpoint context):")) return false;
+  return message.role === "user" || message.role === "assistant";
+}
+
+const greeting = (): ChatMessage => ({
+  id: uid(),
+  role: "assistant",
+  content:
+    "Hi! I'm Safar AI. Tell me about your trip — where you want to go, when, and who's traveling.",
+});
 
 function uid() {
   return Math.random().toString(36).slice(2);
@@ -30,59 +51,173 @@ function mergeSnapshot(prev: TripSnapshot | null, patch: Record<string, unknown>
   return { ...(prev ?? {}), ...patch } as TripSnapshot;
 }
 
+interface CachedThread {
+  messages: ChatMessage[];
+  snapshot: TripSnapshot | null;
+  selections: Selections;
+  showPackageCard: boolean;
+  activeTab: TabId;
+  itinerarySubTab: "overview" | "daily";
+}
+
 export function useSafarTrip() {
   const [threadId, setThreadId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    {
-      id: uid(),
-      role: "assistant",
-      content:
-        "Hi! I'm Safar AI. Tell me about your trip — where you want to go, when, and who's traveling.",
-    },
-  ]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [steps, setSteps] = useState<StepEvent[]>([]);
   const [snapshot, setSnapshot] = useState<TripSnapshot | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("itinerary");
   const [itinerarySubTab, setItinerarySubTab] = useState<"overview" | "daily">("overview");
   const [selections, setSelections] = useState<Selections>({});
+  const [awaitingPlanUpdate, setAwaitingPlanUpdate] = useState(false);
   const [showPackageCard, setShowPackageCard] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isLoadingThread, setIsLoadingThread] = useState(true);
+  const [savedTrips, setSavedTrips] = useState<SavedTripMetadata[]>([]);
   const initRef = useRef(false);
+  const loadSeq = useRef(0);
   const preStreamSnapshot = useRef<TripSnapshot | null>(null);
+  const threadCache = useRef(new Map<string, CachedThread>());
+  const allowCacheWrite = useRef(true);
+
+  const refreshSavedTrips = useCallback(async () => {
+    try {
+      const res = await listTrips();
+      setSavedTrips(res.trips || []);
+    } catch (e) {
+      console.error("Failed to load saved trips", e);
+    }
+  }, []);
+
+  const loadThread = useCallback(async (id: string) => {
+    const seq = ++loadSeq.current;
+    const cached = threadCache.current.get(id);
+    setThreadId(id);
+    setAwaitingPlanUpdate(false);
+    localStorage.setItem(THREAD_KEY, id);
+    if (cached) {
+      allowCacheWrite.current = true;
+      setMessages(cached.messages);
+      setSteps([]);
+      setSnapshot(cached.snapshot);
+      setSelections(capSelections(cached.selections));
+      setShowPackageCard(cached.showPackageCard);
+      setActiveTab(cached.activeTab);
+      setItinerarySubTab(cached.itinerarySubTab);
+      setIsLoadingThread(false);
+      return;
+    }
+
+    setIsLoadingThread(true);
+    setMessages([]);
+    setSteps([]);
+    setSnapshot(null);
+    setSelections({});
+    setShowPackageCard(false);
+    try {
+      const { snapshot: snap } = await getThread(id);
+      const view: CachedThread = snap
+        ? {
+            snapshot: snap,
+            showPackageCard: !!snap.itinerary,
+            selections: (snap.selections as Selections) || {},
+            activeTab: "itinerary",
+            itinerarySubTab: "overview",
+            messages: (() => {
+              const visible = (snap.messages || []).filter(isConversationMessage);
+              return visible.length > 0
+                ? visible.map((m) => ({
+                    id: uid(),
+                    role: m.role === "user" ? ("user" as const) : ("assistant" as const),
+                    content: m.content,
+                  }))
+                : [greeting()];
+            })(),
+          }
+        : {
+            snapshot: null,
+            showPackageCard: false,
+            selections: {},
+            activeTab: "itinerary",
+            itinerarySubTab: "overview",
+            messages: [greeting()],
+          };
+      threadCache.current.set(id, view);
+      if (seq !== loadSeq.current) return;
+      allowCacheWrite.current = true;
+      setSnapshot(view.snapshot);
+      setShowPackageCard(view.showPackageCard);
+      setSelections(capSelections(view.selections));
+      setActiveTab(view.activeTab);
+      setItinerarySubTab(view.itinerarySubTab);
+      setMessages(view.messages);
+    } catch (e) {
+      if (seq !== loadSeq.current) return;
+      allowCacheWrite.current = false;
+      console.error("Failed to load trip", e);
+      setMessages([
+        {
+          id: uid(),
+          role: "assistant",
+          content: "Couldn't load this conversation. Try again.",
+        },
+      ]);
+    } finally {
+      if (seq === loadSeq.current) setIsLoadingThread(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!threadId || isLoadingThread || !allowCacheWrite.current) return;
+    threadCache.current.set(threadId, {
+      messages,
+      snapshot,
+      selections,
+      showPackageCard,
+      activeTab,
+      itinerarySubTab,
+    });
+  }, [
+    threadId,
+    isLoadingThread,
+    messages,
+    snapshot,
+    selections,
+    showPackageCard,
+    activeTab,
+    itinerarySubTab,
+  ]);
 
   useEffect(() => {
     if (initRef.current) return;
     initRef.current = true;
     (async () => {
-      let id = localStorage.getItem(THREAD_KEY);
-      if (!id) {
-        id = await createThread();
-        localStorage.setItem(THREAD_KEY, id);
-      }
-      setThreadId(id);
+      let trips: SavedTripMetadata[] = [];
       try {
-        const { snapshot: snap } = await getThread(id);
-        if (snap) {
-          setSnapshot(snap);
-          if (snap.itinerary) setShowPackageCard(true);
-          if (snap.selections) setSelections(snap.selections as Selections);
-          if (snap.messages && snap.messages.length > 0) {
-            setMessages(
-              snap.messages.map((m) => ({
-                id: uid(),
-                role: m.role === "user" ? "user" : "assistant",
-                content: m.content,
-              }))
-            );
-          }
-        }
-      } catch {
-        const newId = await createThread();
-        localStorage.setItem(THREAD_KEY, newId);
-        setThreadId(newId);
+        const res = await listTrips();
+        trips = res.trips || [];
+        setSavedTrips(trips);
+      } catch (e) {
+        console.error("Failed to load saved trips", e);
       }
+      const remembered = localStorage.getItem(THREAD_KEY);
+      const known = trips.find((trip) => trip.thread_id === remembered);
+      const id = known?.thread_id ?? trips[0]?.thread_id ?? remembered;
+      if (!id) {
+        try {
+          const created = await createThread();
+          localStorage.setItem(THREAD_KEY, created);
+          setThreadId(created);
+          setMessages([greeting()]);
+        } catch (e) {
+          console.error("Failed to start a trip", e);
+        } finally {
+          setIsLoadingThread(false);
+        }
+        return;
+      }
+      await loadThread(id);
     })();
-  }, []);
+  }, [loadThread]);
 
   const handleEvent = useCallback((event: StreamEvent) => {
     if (event.type === "step_start" && event.node && event.label) {
@@ -154,6 +289,7 @@ export function useSafarTrip() {
       if (itineraryIsNew || flightsAreNew || hotelsAreNew) {
         setShowPackageCard(true);
       }
+      refreshSavedTrips();
     }
     if (event.type === "error") {
       setMessages((prev) => [
@@ -165,11 +301,12 @@ export function useSafarTrip() {
         },
       ]);
     }
-  }, []);
+  }, [refreshSavedTrips]);
 
   const sendMessage = useCallback(
     async (content: string) => {
-      if (!threadId || !content.trim() || isStreaming) return;
+      if (!threadId || !content.trim() || isStreaming || isLoadingThread) return;
+      allowCacheWrite.current = true;
       preStreamSnapshot.current = snapshot;
       setMessages((prev) => [...prev, { id: uid(), role: "user", content: content.trim() }]);
       setIsStreaming(true);
@@ -190,36 +327,80 @@ export function useSafarTrip() {
         setIsStreaming(false);
       }
     },
-    [threadId, isStreaming, handleEvent]
+    [threadId, isStreaming, isLoadingThread, handleEvent]
   );
 
   const updateSelections = useCallback(
     async (next: Selections) => {
-      setSelections(next);
+      const capped = capSelections(next);
+      setSelections(capped);
+      if (snapshot?.itinerary) setAwaitingPlanUpdate(true);
       if (threadId) {
-        await patchSelections(threadId, next as Record<string, unknown>);
+        await patchSelections(threadId, capped as Record<string, unknown>);
       }
     },
-    [threadId]
+    [threadId, snapshot?.itinerary]
   );
 
-  const newTrip = useCallback(async () => {
-    const id = await createThread();
-    localStorage.setItem(THREAD_KEY, id);
-    setThreadId(id);
-    setSnapshot(null);
-    setSteps([]);
-    setSelections({});
-    setShowPackageCard(false);
-    setActiveTab("itinerary");
-    setMessages([
-      {
-        id: uid(),
-        role: "assistant",
-        content: "Starting a fresh trip. Where would you like to go?",
-      },
-    ]);
+  const confirmPlanUpdate = useCallback(() => {
+    setAwaitingPlanUpdate(false);
+    void sendMessage("Yes, update the itinerary around my current selections.");
+  }, [sendMessage]);
+
+  const keepPlan = useCallback(() => {
+    setAwaitingPlanUpdate(false);
   }, []);
+
+  const newTrip = useCallback(async () => {
+    loadSeq.current += 1;
+    allowCacheWrite.current = true;
+    setIsLoadingThread(true);
+    try {
+      const id = await createThread();
+      localStorage.setItem(THREAD_KEY, id);
+      setThreadId(id);
+      setSnapshot(null);
+      setSteps([]);
+      setSelections({});
+      setAwaitingPlanUpdate(false);
+      setShowPackageCard(false);
+      setActiveTab("itinerary");
+      setMessages([
+        {
+          id: uid(),
+          role: "assistant",
+          content: "Starting a fresh trip. Where would you like to go?",
+        },
+      ]);
+      await refreshSavedTrips();
+    } catch (e) {
+      console.error("Failed to start a trip", e);
+    } finally {
+      setIsLoadingThread(false);
+    }
+  }, [refreshSavedTrips]);
+
+  const switchTrip = useCallback(
+    async (id: string) => {
+      if (isStreaming) return;
+      if (id === threadId && threadCache.current.has(id)) return;
+      await loadThread(id);
+    },
+    [isStreaming, threadId, loadThread]
+  );
+
+  const removeTrip = useCallback(async (id: string) => {
+    try {
+      threadCache.current.delete(id);
+      await deleteTrip(id);
+      await refreshSavedTrips();
+      if (threadId === id) {
+        await newTrip();
+      }
+    } catch (e) {
+      console.error("Failed to delete trip", e);
+    }
+  }, [threadId, newTrip, refreshSavedTrips]);
 
   return {
     threadId,
@@ -232,15 +413,23 @@ export function useSafarTrip() {
     setItinerarySubTab,
     selections,
     updateSelections,
+    awaitingPlanUpdate,
+    confirmPlanUpdate,
+    keepPlan,
     showPackageCard,
     isStreaming,
+    isLoadingThread,
     sendMessage,
     newTrip,
+    savedTrips,
+    switchTrip,
+    removeTrip,
     structured: snapshot?.structured as Record<string, unknown> | undefined,
     itinerary: snapshot?.itinerary as Itinerary | undefined,
     weather: snapshot?.weather as WeatherOutlook | undefined,
     destinationAbout: snapshot?.destination_about ?? "",
     flights: snapshot?.flights_data as FlightsData | undefined,
+    trains: (snapshot?.trains ?? null) as TrainsData | null,
     hotels: (snapshot?.hotel_search_results ?? null) as HotelProperty[] | null,
   };
 }

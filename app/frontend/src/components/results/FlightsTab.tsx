@@ -87,6 +87,7 @@ export function FlightsTab({ flights, source, dest, selections, onSelections }: 
 
   return (
     <div className="space-y-8">
+      <p className="text-sm text-gray-500">Select one outbound flight and one return flight.</p>
       <LegSection
         title={`Outbound · ${depCode} → ${arrCode}${legDateLabel(outboundList) ? ` · ${legDateLabel(outboundList)}` : ""}`}
         emptyText="No outbound flights found for these dates."

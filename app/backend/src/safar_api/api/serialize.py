@@ -11,6 +11,8 @@ def _artifact_patch(kind: str, update: dict[str, Any]) -> dict[str, Any]:
         return {}
     if kind == "flights":
         return {"flights_data": data}
+    if kind == "trains":
+        return {"trains": data}
     if kind == "stays":
         return {"hotel_search_results": data.get("properties") or []}
     if kind == "itinerary":
@@ -42,7 +44,7 @@ def patch_for_node(node: str, update: dict[str, Any] | None) -> dict[str, Any]:
             if isinstance(payload.get("stated"), list):
                 payload["stated"] = set(payload["stated"])
             patch["structured"] = TripBrief.model_validate(payload).to_ui_trip()
-    for kind in ("research", "weather", "flights", "stays", "itinerary"):
+    for kind in ("research", "weather", "flights", "trains", "stays", "itinerary"):
         if kind in update:
             patch.update(_artifact_patch(kind, update))
     if update.get("last_step_detail"):

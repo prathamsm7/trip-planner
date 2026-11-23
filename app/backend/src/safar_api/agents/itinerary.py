@@ -21,6 +21,7 @@ def _state_as_dict(state: AgentState) -> dict[str, Any]:
     return {
         "selections": state.selections or {},
         "flights": state.flights.model_dump() if state.flights else None,
+        "trains": state.trains.model_dump() if state.trains else None,
         "stays": state.stays.model_dump() if state.stays else None,
     }
 
@@ -29,6 +30,8 @@ def _travel_context(state: AgentState) -> str:
     resolved = resolve_selections(_state_as_dict(state))
     out = resolved.get("outbound_flight")
     ret = resolved.get("return_flight")
+    out_train = resolved.get("outbound_train")
+    ret_train = resolved.get("return_train")
     hotels = resolved.get("hotels") or []
     lines = ["SELECTED TRAVEL (authoritative — schedule around these):"]
     if out:
@@ -42,6 +45,15 @@ def _travel_context(state: AgentState) -> str:
             "  Day 1 must respect arrival time: late-night arrival → light/evening-only plan; "
             "morning arrival → full day is fine."
         )
+    elif out_train:
+        train = out_train
+        lines.append(
+            f"- Outbound train: {train.get('train_number')} {train.get('train_name')} "
+            f"({train.get('train_type_label') or train.get('train_type')}) "
+            f"{train.get('from_station_code')} {train.get('departure_time')} → "
+            f"{train.get('to_station_code')} {train.get('arrival_time')}"
+        )
+        lines.append("  Day 1 must respect the train arrival time.")
     else:
         lines.append("- Outbound: not selected yet")
     if ret:
@@ -54,6 +66,14 @@ def _travel_context(state: AgentState) -> str:
         lines.append(
             "  Last day must leave enough time to reach the airport before departure."
         )
+    elif ret_train:
+        train = ret_train
+        lines.append(
+            f"- Return train: {train.get('train_number')} {train.get('train_name')} "
+            f"{train.get('from_station_code')} {train.get('departure_time')} → "
+            f"{train.get('to_station_code')} {train.get('arrival_time')}"
+        )
+        lines.append("  The last day must leave enough time to reach the station before departure.")
     else:
         lines.append("- Return: not selected yet")
     if hotels:

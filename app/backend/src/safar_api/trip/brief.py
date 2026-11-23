@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 Budget = Literal["low", "medium", "high"]
 TravelStyle = Literal["solo", "couple", "family", "friends", "business"] 
-TransportMode = Literal["flight", "train", "bus", "car"]
+TransportMode = Literal["flight", "train", "bus", "car", ""]
 
 BRIEF_FIELDS = (
     "origin",

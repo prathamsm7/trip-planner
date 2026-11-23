@@ -1,4 +1,4 @@
 {
-  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
-  "jupyter.kernels.excludePythonEnvironments": []
+"python.defaultInterpreterPath": "${workspaceFolder}/app/backend/.venv/bin/python",
+"jupyter.kernels.excludePythonEnvironments": []
 }

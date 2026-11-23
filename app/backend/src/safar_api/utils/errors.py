@@ -22,6 +22,8 @@ def friendly_error(exc: BaseException) -> str:
             "I hit an issue preparing your trip. Please add destination and dates, "
             "or try your request again."
         )
+    if "no tool output found" in lower or "unboundlocalerror" in lower or "cannot access local variable" in lower:
+        return "I lost the last step. Please send that request again."
     if "toolmessage" in lower and "command.update" in lower:
         return (
             "I hit an issue coordinating tools for that request. "

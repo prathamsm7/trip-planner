@@ -7,7 +7,7 @@ interface Props {
   source: string;
   dateStart?: string;
   dateEnd?: string;
-  onSelect: (tab: "itinerary" | "flights" | "hotels" | "package") => void;
+  onSelect: (tab: "itinerary" | "flights" | "trains" | "hotels" | "package") => void;
 }
 
 const rows = [
@@ -20,8 +20,14 @@ const rows = [
   {
     key: "flights" as const,
     icon: "✈️",
-    title: (d: string, s: string) => `${s || "—"} → ${d || "—"}`,
-    sub: "Click to view flight options",
+    title: () => "FLIGHT",
+    sub: "View flight options",
+  },
+  {
+    key: "trains" as const,
+    icon: "🚆",
+    title: () => "TRAIN",
+    sub: "View train options",
   },
   {
     key: "hotels" as const,
@@ -32,7 +38,7 @@ const rows = [
   {
     key: "package" as const,
     icon: "🎁",
-    title: () => "RECOMMENDED PACKAGE",
+    title: () => "PACKAGES",
     sub: "View package details",
   },
 ];
@@ -68,11 +74,7 @@ export function TripPackageCard({ destination, source, onSelect }: Props) {
               <span className="text-lg">{row.icon}</span>
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-sm text-gray-900 truncate">
-                  {row.key === "itinerary"
-                    ? row.title(destination)
-                    : row.key === "flights"
-                      ? row.title(destination, source)
-                      : row.title()}
+                  {row.key === "itinerary" ? row.title(destination) : row.title()}
                 </p>
                 <p className="text-xs text-gray-500">{row.sub}</p>
               </div>

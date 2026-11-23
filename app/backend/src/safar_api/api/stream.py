@@ -6,14 +6,25 @@ import json
 import logging
 from typing import Any, AsyncIterator
 
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from safar_api.api.serialize import patch_for_node
-from safar_api.trip.state import snapshot_from_agent_state
+from safar_api.trip.state import (
+    is_hidden_transcript_message,
+    snapshot_from_agent_state,
+    sync_chat_transcript,
+    visible_reply,
+)
 from safar_api.agents.trip_agent_state import empty_trip_fields
 from safar_api.graph.build import get_graph
 from safar_api.logging_config import log_exception
-from safar_api.nodes.guardrail import message_text, refusal_message, rule_check, sanitize_output
+from safar_api.nodes.guardrail import (
+    message_text,
+    redact_pii,
+    refusal_message,
+    rule_check,
+    sanitize_output,
+)
 from safar_api.tracing import langsmith_run_config
 from safar_api.utils.errors import friendly_error
 
@@ -47,6 +58,9 @@ def _ui_hints(node: str, update: dict | None = None) -> dict[str, Any]:
     if update and (update.get("flights_data") or update.get("flights") or base == "search_flights"):
         hints["open_tab"] = "flights"
         hints["show_package_card"] = True
+    if update and (update.get("trains") or base == "search_trains"):
+        hints["open_tab"] = "trains"
+        hints["show_package_card"] = True
     if update and (
         update.get("hotel_search_results") or update.get("stays") or base == "search_stays"
     ):
@@ -77,9 +91,12 @@ async def _stream_agent(
     graph_input: dict[str, Any],
     config: dict[str, Any],
     thread_id: str,
+    user_text: str,
 ) -> AsyncIterator[str]:
     """Stream the supervisor via updates + custom (runtime.stream_writer progress)."""
     message_sent = False
+    replies: list[str] = []
+    tool_texts: set[str] = set()
     step_i = 0
     # tool_call_id → step_id so start/complete pair correctly
     open_steps: dict[str, str] = {}
@@ -152,24 +169,40 @@ async def _stream_agent(
             if base == "model":
                 for msg in update.get("messages") or []:
                     text = _assistant_text(msg)
-                    if text:
+                    reply = visible_reply(sanitize_output(text), tool_texts) if text else ""
+                    if reply:
                         message_sent = True
+                        replies.append(reply)
                         yield _sse(
                             {
                                 "type": "message",
                                 "role": "assistant",
-                                "content": sanitize_output(text),
+                                "content": reply,
                                 "thread_id": thread_id,
                             }
                         )
                 continue
 
             if base == "tools":
+                for msg in update.get("messages") or []:
+                    if isinstance(msg, ToolMessage):
+                        tool_text = message_text(msg.content).strip()
+                        if tool_text:
+                            tool_texts.add(tool_text)
                 patch = patch_for_node(base, update)
                 hints = _ui_hints(base, update)
                 produced = []
                 if update.get("flights") is not None:
                     produced.append("search_flights")
+                if update.get("trains") is not None:
+                    train_update = update.get("trains")
+                    train_data = {}
+                    if isinstance(train_update, dict):
+                        nested = train_update.get("data")
+                        train_data = nested if isinstance(nested, dict) else train_update
+                    elif hasattr(train_update, "data") and isinstance(train_update.data, dict):
+                        train_data = train_update.data
+                    produced.append("search_trains" if train_data.get("searched") else "search_railway_stations")
                 if update.get("stays") is not None:
                     produced.append("search_stays")
                 if update.get("research") is not None:
@@ -198,19 +231,38 @@ async def _stream_agent(
                         yield _sse({"type": "package_ready", "thread_id": thread_id})
 
     values = (graph.get_state(config).values) or {}
+    try:
+        from safar_api.trip.persistence import upsert_trip_metadata
+        upsert_trip_metadata(thread_id, values.get("brief") or {})
+    except Exception as e:
+        logger.error("Failed to sync trip metadata: %s", e)
+
     if not message_sent:
-        for msg in reversed(list(values.get("messages") or [])):
+        history = list(values.get("messages") or [])
+        last_user = -1
+        for index, msg in enumerate(history):
+            if isinstance(msg, HumanMessage) and not is_hidden_transcript_message(msg):
+                last_user = index
+        for msg in reversed(history[last_user + 1 :]):
             text = _assistant_text(msg)
-            if text:
+            reply = visible_reply(sanitize_output(text), tool_texts) if text else ""
+            if reply:
+                replies.append(reply)
                 yield _sse(
                     {
                         "type": "message",
                         "role": "assistant",
-                        "content": sanitize_output(text),
+                        "content": reply,
                         "thread_id": thread_id,
                     }
                 )
                 break
+    try:
+        chat = sync_chat_transcript(graph, config, user_text=user_text, replies=replies)
+        if chat:
+            values = {**values, "chat": chat}
+    except Exception:
+        logger.exception("Saving chat transcript failed")
     yield _sse(
         {
             "type": "done",
@@ -220,21 +272,61 @@ async def _stream_agent(
     )
 
 
-async def stream_graph(thread_id: str, content: str | None = None) -> AsyncIterator[str]:
-    """Stream one user turn through the supervisor."""
-    graph = get_graph()
-    config = langsmith_run_config(thread_id)
+def unanswered_tool_messages(messages: list[Any]) -> list[ToolMessage]:
+    """Tool results for calls that were saved without a result.
 
+    A crashed tool leaves the assistant's function call in the checkpoint.
+    The next turn is rejected until each call has a matching tool message.
+    """
+    answered = {
+        message.tool_call_id
+        for message in messages
+        if isinstance(message, ToolMessage) and message.tool_call_id
+    }
+    repairs: list[ToolMessage] = []
+    for message in messages:
+        if not isinstance(message, AIMessage):
+            continue
+        for call in message.tool_calls or []:
+            call_id = call.get("id") if isinstance(call, dict) else getattr(call, "id", None)
+            if not call_id or call_id in answered:
+                continue
+            answered.add(call_id)
+            repairs.append(
+                ToolMessage(
+                    content="That step failed before it finished.",
+                    tool_call_id=call_id,
+                )
+            )
+    return repairs
+
+
+def _existing_snapshot(thread_id: str) -> dict[str, Any]:
+    """Read a saved trip without building the graph for a new thread."""
+    from safar_api.graph import build as graph_build
+
+    if graph_build._graph is None:
+        return snapshot_from_agent_state({})
+    config = langsmith_run_config(thread_id)
+    values = (graph_build._graph.get_state(config).values) or {}
+    return snapshot_from_agent_state(values)
+
+
+async def stream_graph(thread_id: str, content: str | None = None) -> AsyncIterator[str]:
+    """One user turn: check the message, then run the supervisor.
+
+    A blocked message stops here. The graph is not built and no tool runs.
+    """
     try:
         if not content or not content.strip():
             yield _sse({"type": "error", "message": "Please enter a message."})
             return
 
-        blocked = rule_check(content)
+        content = redact_pii(content)
+        blocked = rule_check(content, thread_id=thread_id)
         if blocked:
-            action, reason = blocked
+            action, _reason = blocked
             reply = refusal_message(action)
-            logger.info("input blocked (%s)", reason)
             if reply:
                 yield _sse(
                     {
@@ -244,21 +336,25 @@ async def stream_graph(thread_id: str, content: str | None = None) -> AsyncItera
                         "thread_id": thread_id,
                     }
                 )
-            values = (graph.get_state(config).values) or {}
             yield _sse(
                 {
                     "type": "done",
                     "thread_id": thread_id,
-                    "snapshot": snapshot_from_agent_state(values),
+                    "snapshot": _existing_snapshot(thread_id),
                 }
             )
             return
 
+        graph = get_graph()
+        config = langsmith_run_config(thread_id)
         existing = (graph.get_state(config).values) or {}
+        repairs = unanswered_tool_messages(list(existing.get("messages") or []))
+        if repairs:
+            graph.update_state(config, {"messages": repairs})
         graph_input = {"messages": [HumanMessage(content=content)]}
         if not existing:
             graph_input = {**empty_trip_fields(), **graph_input}
-        async for event in _stream_agent(graph, graph_input, config, thread_id):
+        async for event in _stream_agent(graph, graph_input, config, thread_id, content):
             yield event
 
     except Exception as exc:
